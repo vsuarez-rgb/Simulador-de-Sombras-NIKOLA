@@ -84,13 +84,22 @@ export function migrate(p: Project): Project {
   return { ...rest, volumes, modulo: { ...DEFAULT_MODULE, ...p.modulo }, elec: { ...DEFAULT_ELEC, ...(p.elec ?? {}) }, clima: p.clima ?? null };
 }
 
+/** Proyecto nuevo: vacío, para dibujar la casa desde cero (sin volúmenes, paneles ni obstáculos). */
 export function defaultProject(): Project {
-  const casa: Volume = { ...VOL_TEMPLATES.casa, id: uid(), x: 0, y: 0, rot: 0 };
   return {
     version: 2, nombre: 'Proyecto nuevo',
     site: { nombre: 'Santiago', lat: -33.45, lon: -70.66, tz: -3, albedo: 0.2 },
     modulo: DEFAULT_MODULE,
     elec: DEFAULT_ELEC, clima: null,
+    volumes: [], fields: [], obstacles: [],
+  };
+}
+
+/** Proyecto de ejemplo: casa de 2 pisos con un campo en el faldón norte, un árbol, un edificio vecino y una chimenea. */
+export function exampleProject(): Project {
+  const casa: Volume = { ...VOL_TEMPLATES.casa, id: uid(), x: 0, y: 0, rot: 0 };
+  return {
+    ...defaultProject(), nombre: 'Proyecto de ejemplo',
     volumes: [casa],
     fields: [
       { id: uid(), nombre: 'Techo norte', x: 0, y: 2.2, montaje: 'coplanar', rango: '10-15', tilt: 12, azim: 0, filas: 2, mods: 5, enAlto: 1, orient: 'V', pitch: 3, altura: 0.12, vol: casa.id },

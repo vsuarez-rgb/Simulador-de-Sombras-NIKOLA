@@ -326,7 +326,7 @@ function Compass() {
   return (
     <group position={[-20, 0.02, -20]}>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -1]}><coneGeometry args={[0.6, 2, 3]} /><meshBasicMaterial color="#082537" /></mesh>
-      <Html position={[0, 0.2, -2.8]} center style={{ pointerEvents: 'none' }}><div className="lab">N</div></Html>
+      <Html position={[0, 0.2, -2.8]} center style={{ pointerEvents: 'none' }} zIndexRange={[5, 0]}><div className="lab">N</div></Html>
     </group>
   );
 }

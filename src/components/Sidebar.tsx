@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { distanceToHouse, eaveHeight, TILT_RANGES, uid, type ElecTool, type ObsType, type RoofType, type TiltRange, type Volume, type VolTipo } from '../engine/project';
+import { distanceToHouse, eaveHeight, TILT_RANGES, uid, type ElecTool, type ObsType, type RoofType, type TiltRange, type VolTipo } from '../engine/project';
 import { parseWeather, weatherSummary } from '../engine/weather';
 import { analyzeDay, analyzeYear } from '../sim/analyze';
 import { daySummary, hhmm } from '../sim/sunpath';
@@ -135,42 +135,6 @@ const VOL_ADD: [VolTipo, string, string, ReactNode][] = [
   ['garage', 'Garage / bodega', 'Techo plano, 1 piso', ico(<><rect x="3" y="8" width="18" height="12" rx="1" /><path d="M6 20v-7h12v7M6 16h12" /></>)],
 ];
 
-/** Planta del diseño (Norte arriba): todos los volúmenes con su frente; clic para elegir uno. */
-function SitePlan() {
-  const vs = useStore(s => s.project.volumes), sel = useStore(s => s.sel), set = useStore(s => s.set);
-  if (!vs.length) return <div className="plan empty"><span>Agrega la casa con los botones de abajo</span></div>;
-  const poly = (b: Volume) => {
-    const r = b.rot * Math.PI / 180, ex = [Math.cos(r), -Math.sin(r)], ez = [-Math.sin(r), -Math.cos(r)], W = b.ancho / 2, D = b.fondo / 2;
-    return [[-W, -D], [W, -D], [W, D], [-W, D]].map(([lx, lz]) => [b.x + lx * ex[0] + lz * ez[0], b.y + lx * ex[1] + lz * ez[1]]);
-  };
-  const pts = vs.map(poly), all = pts.flat();
-  const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-  const pad = Math.max(x1 - x0, y1 - y0, 8) * 0.14 + 1, vb = [x0 - pad, -(y1 + pad), x1 - x0 + 2 * pad, y1 - y0 + 2 * pad];
-  const k = Math.max(vb[2], vb[3] * 1.6) / 100; // escala de trazo y texto
-  return (
-    <div className="plan">
-      <svg viewBox={vb.join(' ')} preserveAspectRatio="xMidYMid meet">
-        <defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0L10 5L0 10z" fill="#fff" /></marker></defs>
-        {vs.map((v, i) => {
-          const on = sel?.kind === 'vol' && sel.id === v.id, r = v.rot * Math.PI / 180;
-          const f = [v.x + Math.sin(r) * (v.fondo / 2 + k * 5), v.y + Math.cos(r) * (v.fondo / 2 + k * 5)];
-          const e = [v.x + Math.sin(r) * (v.fondo / 2 - k * 1), v.y + Math.cos(r) * (v.fondo / 2 - k * 1)];
-          return (
-            <g key={v.id} className="pv" onClick={() => set({ sel: { kind: 'vol', id: v.id } })}>
-              <polygon points={pts[i].map(q => `${q[0]},${-q[1]}`).join(' ')} fill={on ? 'rgba(250,183,4,.35)' : 'rgba(250,183,4,.12)'} stroke="#FAB704" strokeWidth={k * (on ? 1.6 : 0.8)} strokeLinejoin="round" />
-              <line x1={e[0]} y1={-e[1]} x2={f[0]} y2={-f[1]} stroke="#fff" strokeWidth={k * 0.8} markerEnd="url(#fa)" />
-              <text x={v.x} y={-v.y + k * 1.2} fontSize={k * 3.4} fill="#fff" textAnchor="middle">{v.nombre} · {v.pisos}p</text>
-            </g>
-          );
-        })}
-      </svg>
-      <span className="n">N ▲</span>
-      <span className="dims">{(x1 - x0).toFixed(1)} × {(y1 - y0).toFixed(1)} m · flecha = frente</span>
-    </div>
-  );
-}
-
 // ---------- 1. Diseño de la casa ----------
 function Casa() {
   const vs = useStore(s => s.project.volumes), sel = useStore(s => s.sel), fields = useStore(s => s.project.fields);
@@ -179,7 +143,7 @@ function Casa() {
   const mounted = v ? fields.filter(f => f.vol === v.id).length : 0;
   return (
     <>
-      <SitePlan />
+      <p className="note">Dibuja cada volumen en el <b>plano del centro</b> con “✏ Dibujar volumen”: clic en las dos esquinas del frente y luego hacia el fondo. También puedes agregar uno con medidas típicas:</p>
       <div className="voladd">{VOL_ADD.map(([t, n, d, ic]) => (
         <button key={t} onClick={() => addVol(t)} title={d}>{ic}<span><b>+ {n}</b>{d}</span></button>))}</div>
       {vs.length > 1 && <div className="list">{vs.map(x => (

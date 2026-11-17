@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Logo from './components/Logo';
+import PlanEditor from './components/PlanEditor';
 import Results, { rowsToCsv, useRows } from './components/Results';
 import Sidebar from './components/Sidebar';
 import { Seg } from './components/ui';
@@ -63,7 +64,7 @@ function Legend() {
 
 function ViewButtons() {
   const showLabels = useStore(s => s.showLabels), showDims = useStore(s => s.showDims), showSunPath = useStore(s => s.showSunPath), set = useStore(s => s.set);
-  const hideSide = useStore(s => s.hideSide), hideRes = useStore(s => s.hideRes), full = hideSide && hideRes;
+  const hideSide = useStore(s => s.hideSide), hideRes = useStore(s => s.hideRes), full = hideSide && hideRes, tab = useStore(s => s.tab);
   // Esc sale de la pantalla completa 3D (si el foco no está en un campo de texto)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -75,6 +76,7 @@ function ViewButtons() {
   }, []);
   return (
     <div className="ov viewbtns">
+      {tab === 'casa' && <button className="back" onClick={() => set({ casaView: 'plano' })}>← Volver al plano</button>}
       <button onClick={() => camBus.fn('3d')}>Vista 3D</button>
       <button onClick={() => camBus.fn('top')}>Planta</button>
       <button onClick={() => camBus.fn('sun')}>Desde el sol</button>
@@ -114,7 +116,7 @@ function Welcome() {
         <ol className="pasos">{PASOS.map(([t, d], i) => <li key={t}><span>{i + 1}</span><div><b>{t}</b>{d}</div></li>)}</ol>
         <div className="acts">
           <button className="btn pri" onClick={() => close(true)}>Comenzar</button>
-          <button className="btn sec" onClick={() => close(false)}>Explorar el ejemplo</button>
+          <button className="btn sec" onClick={() => { close(false); useStore.getState().loadExample(); }}>Explorar el ejemplo</button>
         </div>
       </div>
     </div>
@@ -156,16 +158,18 @@ function Header() {
 export default function App() {
   const sim = useSimState();
   const hideSide = useStore(s => s.hideSide), hideRes = useStore(s => s.hideRes);
+  // paso 1: el centro muestra el plano para dibujar la casa (con opción de ver en 3D) y se ocultan los resultados
+  const tab = useStore(s => s.tab), casaView = useStore(s => s.casaView), plano = tab === 'casa' && casaView === 'plano';
   return (
     <SimContext.Provider value={sim}>
       <Header />
       <Welcome />
       <div className={'app' + (hideSide ? ' noside' : '')}>
         <Sidebar />
-        <main className={hideRes ? 'nores' : ''}>
+        <main className={hideRes || tab === 'casa' ? 'nores' : ''}>
           <div className="view">
             <Viewer />
-            <ViewButtons /><SunInfo /><TimeBar /><Legend />
+            {plano ? <PlanEditor /> : <><ViewButtons /><SunInfo /><TimeBar /><Legend /></>}
           </div>
           <Results />
         </main>

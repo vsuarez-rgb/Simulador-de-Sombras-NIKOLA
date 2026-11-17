@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { defaultProject, insideBlock, migrate, roofSpot, toWorld, uid, VOL_TEMPLATES, type ElecConfig, type ElecTool, type Field, type ModuleSpec, type Obstacle, type ObsType, type Project, type Site, type Volume, type VolTipo, type Weather } from './engine/project';
+import { defaultProject, exampleProject, insideBlock, migrate, roofSpot, toWorld, uid, VOL_TEMPLATES, type ElecConfig, type ElecTool, type Field, type ModuleSpec, type Obstacle, type ObsType, type Project, type Site, type Volume, type VolTipo, type Weather } from './engine/project';
 import type { DayResult, YearResult } from './engine/sim';
 
 export type Sel = { kind: 'vol'; id: string } | { kind: 'field'; id: string } | { kind: 'obs'; id: string } | null;
@@ -43,6 +43,12 @@ interface State {
   /** Cambia medidas/techo de un volumen (los campos montados sobre él se reubican solos al recalcular). */
   setVol: (id: string, v: Partial<Volume>) => void;
   addVol: (t: VolTipo) => void;
+  /** Volumen dibujado en el plano: rectángulo con centro, giro (azimut del frente) y medidas. */
+  addVolRect: (t: VolTipo, r: { x: number; y: number; rot: number; ancho: number; fondo: number }) => void;
+  /** Carga el proyecto de ejemplo. */
+  loadExample: () => void;
+  /** En el paso Casa: plano 2D para dibujar o vista 3D. */
+  casaView: 'plano' | '3d';
   removeVol: (id: string) => void;
   dupVol: (id: string) => void;
   setField: (id: string, f: Partial<Field>) => void;
@@ -146,6 +152,14 @@ export const useStore = create<State>((set, get) => {
         ...p, volumes: p.volumes.map(x => (x.id === id ? nv : x)),
         fields: reroof ? p.fields.map(f => (f.vol === id ? { ...f, ...clean(spotFor(nv, p.site.lat, p.modulo, f.orient)) } : f)) : p.fields,
       });
+    },
+    casaView: 'plano',
+    loadExample: () => { const st = get(); st.setProject(exampleProject()); goStep('casa'); },
+    addVolRect: (t, r) => {
+      const p = get().project, n = p.volumes.filter(v => v.tipo === t).length;
+      const v: Volume = { ...VOL_TEMPLATES[t], id: uid(), x: r2(r.x), y: r2(r.y), rot: norm360(r.rot), ancho: r2(r.ancho), fondo: r2(r.fondo) };
+      if (n > 0) v.nombre = `${v.nombre} ${n + 1}`;
+      touch({ ...p, volumes: [...p.volumes, v] }); set({ sel: { kind: 'vol', id: v.id } });
     },
     addVol: t => {
       const p = get().project, st = get();
