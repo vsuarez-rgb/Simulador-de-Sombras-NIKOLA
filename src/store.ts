@@ -21,8 +21,6 @@ interface State {
   fecha: string; hora: number; sub: number; clima: Clima; tool: ElecTool; activeString: string | null;
   showLabels: boolean; showDims: boolean; selModule: number;
   hideSide: boolean; hideRes: boolean;
-  /** Objeto que se está arrastrando en el visor (para cotas y tooltip en vivo). */
-  dragging: Sel;
   /** Mapa de calor de Día/Año: detalle por celda o un color por panel (pérdida eléctrica). */
   colorBy: ColorBy;
   /** Los resultados de Día/Año ya no corresponden a la geometría/configuración actual. */
@@ -56,7 +54,7 @@ const OBS_NEW: Record<ObsType, Omit<Obstacle, 'id'>> = {
 };
 
 export const useStore = create<State>((set, get) => {
-  // Guardado diferido: al arrastrar objetos el proyecto cambia en cada frame y serializarlo
+  // Guardado diferido: al escribir en los campos el proyecto cambia muy seguido y serializarlo
   // (con el archivo de clima incluido) cada vez trabaría la interfaz.
   let saveT: ReturnType<typeof setTimeout> | undefined;
   const save = () => { clearTimeout(saveT); saveT = undefined; try { localStorage.setItem(KEY, JSON.stringify(get().project)); } catch { /* */ } };
@@ -74,7 +72,7 @@ export const useStore = create<State>((set, get) => {
     sel: null, tab: 'casa', mode: 'instante',
     fecha: `${year}-06-21`, hora: 15, sub: 2, clima: 'despejado', tool: 'string', activeString: null,
     showLabels: true, showDims: true, selModule: -1,
-    hideSide: false, hideRes: false, dragging: null, colorBy: 'celda', stale: false,
+    hideSide: false, hideRes: false, colorBy: 'celda', stale: false,
     day: null, yearRes: null, busy: null, error: null, pvgisCache: null,
     resetStorage: () => { clearTimeout(saveT); saveT = undefined; try { localStorage.removeItem(KEY); } catch { /* */ } },
     setProject: p => { touch(migrate(p), true); set({ sel: null, selModule: -1 }); },
