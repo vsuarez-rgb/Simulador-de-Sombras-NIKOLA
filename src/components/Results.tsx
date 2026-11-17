@@ -5,6 +5,7 @@ import type { Weather } from '../engine/project';
 import { parseFecha, useSim } from '../sim/useSim';
 import { heat, pct } from '../sim/viz';
 import { useStore, type Clima, type Mode } from '../store';
+import SunChart from './SunChart';
 import { Seg } from './ui';
 
 let worker: Worker | null = null;
@@ -208,11 +209,29 @@ export default function Results() {
 
 const kwh = (x: number) => (x >= 100 ? x.toFixed(0) : x.toFixed(1));
 function RightPanel({ elec, periodo }: { elec: ElecResult | null; periodo: string }) {
-  const [tab, setTab] = useState<'grafico' | 'strings'>('strings');
+  const [tab, setTab] = useState<'solar' | 'grafico' | 'strings'>('solar');
+  const [big, setBig] = useState(false);
+  useEffect(() => {
+    if (!big) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setBig(false); };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, [big]);
   return (
     <>
-      <div className="tabs"><Seg value={tab} options={[['strings', 'Strings y optimizadores'], ['grafico', 'Gráfico']]} onChange={setTab} /></div>
-      {tab === 'grafico' ? <><Chart /><Detail /></> : <ElecPanel elec={elec} periodo={periodo} />}
+      <div className="tabs">
+        <Seg value={tab} options={[['solar', 'Diagrama solar'], ['strings', 'Strings y optimizadores'], ['grafico', 'Gráfico']]} onChange={setTab} />
+        {tab === 'solar' && <button className="btn ter sm" onClick={() => setBig(true)}>Ampliar</button>}
+      </div>
+      {tab === 'solar' ? <SunChart /> : tab === 'grafico' ? <><Chart /><Detail /></> : <ElecPanel elec={elec} periodo={periodo} />}
+      {big && (
+        <div className="modal" onClick={() => setBig(false)}>
+          <div className="modalbox" onClick={e => e.stopPropagation()}>
+            <div className="modalhead"><span className="lbl">Diagrama solar · trayectorias del sol y sombras</span><button className="btn sec sm" onClick={() => setBig(false)}>Cerrar</button></div>
+            <SunChart height={420} />
+            <p className="note">Cada curva es la trayectoria del sol el día 21 del mes; las líneas punteadas unen la misma hora a lo largo del año. La zona gris es lo que tapa el sol (casa, objetos y otros campos) visto desde el módulo indicado: cuando la curva del sol pasa por la zona gris, ese módulo queda a la sombra.</p>
+          </div>
+        </div>
+      )}
     </>
   );
 }
