@@ -16,7 +16,7 @@ export async function GET(request: Request): Promise<Response> {
     const t = String(row['time(UTC)']);
     return {
       m: Number(t.slice(4, 6)), d: Number(t.slice(6, 8)), h: Number(t.slice(9, 11)) + Number(t.slice(11, 13)) / 60,
-      ghi: Number(row['G(h)']) || 0, dni: Number(row['Gb(n)']) || 0, dhi: Number(row['Gd(h)']) || 0,
+      ghi: Number(row['G(h)']) || 0, dni: Number(row['Gb(n)']) || 0, dhi: Number(row['Gd(h)']) || 0, ta: Number(row['T2m']),
     };
   });
   return Response.json({ lat, lon, fuente: 'PVGIS v5.2 TMY', n: hours.length, hours }, {

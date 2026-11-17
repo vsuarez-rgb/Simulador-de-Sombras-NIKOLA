@@ -1,14 +1,15 @@
 import { create } from 'zustand';
-import { defaultProject, uid, type Field, type House, type Obstacle, type ObsType, type Project, type Site, type ModuleSpec } from './engine/project';
-import type { DayResult, TmyHour, YearResult } from './engine/sim';
+import { defaultProject, migrate, uid, type ElecConfig, type ElecTool, type Field, type House, type ModuleSpec, type Obstacle, type ObsType, type Project, type Site, type Weather } from './engine/project';
+import type { DayResult, YearResult } from './engine/sim';
 
 export type Sel = { kind: 'house' } | { kind: 'field'; id: string } | { kind: 'obs'; id: string } | null;
 export type Mode = 'instante' | 'dia' | 'anio';
-export type Tab = 'sitio' | 'casa' | 'paneles' | 'objetos';
+export type Tab = 'sitio' | 'casa' | 'paneles' | 'objetos' | 'electrico';
+export type Clima = 'despejado' | 'archivo' | 'pvgis';
 
 const KEY = 'nikola-sombras-v2';
 function load(): Project {
-  try { const s = localStorage.getItem(KEY); if (s) { const p = JSON.parse(s); if (p.version === 2) return p; } } catch { /* sin almacenamiento */ }
+  try { const s = localStorage.getItem(KEY); if (s) { const p = JSON.parse(s); if (p.version === 2) return migrate(p); } } catch { /* sin almacenamiento */ }
   return defaultProject();
 }
 const year = new Date().getFullYear();
@@ -16,13 +17,16 @@ const year = new Date().getFullYear();
 interface State {
   project: Project;
   sel: Sel; tab: Tab; mode: Mode;
-  fecha: string; hora: number; sub: number; clima: 'despejado' | 'pvgis';
+  fecha: string; hora: number; sub: number; clima: Clima; tool: ElecTool; activeString: string | null;
   showLabels: boolean; showDims: boolean; selModule: number;
   day: DayResult | null; yearRes: YearResult | null; busy: number | null; error: string | null;
-  tmy: { key: string; hours: TmyHour[] } | null;
+  pvgisCache: { key: string; w: Weather } | null;
   setProject: (p: Project) => void;
   setSite: (s: Partial<Site>) => void;
   setModulo: (m: Partial<ModuleSpec>) => void;
+  setElec: (e: Partial<ElecConfig>) => void;
+  setClimaData: (w: Weather | null) => void;
+  clickModuleElec: (key: string) => void;
   setHouse: (h: Partial<House>) => void;
   setField: (id: string, f: Partial<Field>) => void;
   addField: (where: 'techo' | 'suelo') => void;
@@ -49,12 +53,26 @@ export const useStore = create<State>((set, get) => {
   return {
     project: load(),
     sel: null, tab: 'casa', mode: 'instante',
-    fecha: `${year}-06-21`, hora: 15, sub: 2, clima: 'despejado',
+    fecha: `${year}-06-21`, hora: 15, sub: 2, clima: 'despejado', tool: 'string', activeString: null,
     showLabels: true, showDims: true, selModule: -1,
-    day: null, yearRes: null, busy: null, error: null, tmy: null,
-    setProject: p => { touch(p); set({ sel: null, selModule: -1 }); },
+    day: null, yearRes: null, busy: null, error: null, pvgisCache: null,
+    setProject: p => { touch(migrate(p)); set({ sel: null, selModule: -1 }); },
     setSite: s => touch({ ...get().project, site: { ...get().project.site, ...s } }),
     setModulo: m => touch({ ...get().project, modulo: { ...get().project.modulo, ...m } }),
+    setElec: e => touch({ ...get().project, elec: { ...get().project.elec, ...e } }),
+    setClimaData: w => { touch({ ...get().project, clima: w }); set({ clima: w ? 'archivo' : 'despejado' }); },
+    clickModuleElec: key => {
+      const st = get(), e = st.project.elec, toggle = (arr: string[]) => (arr.includes(key) ? arr.filter(k => k !== key) : [...arr, key]);
+      if (st.tool === 'optimizador') return st.setElec({ optimizados: toggle(e.optimizados) });
+      if (st.tool === 'excluir') return st.setElec({ excluidos: toggle(e.excluidos) });
+      // herramienta string (modo manual): el módulo pasa al string activo, o sale de él
+      if (e.modo !== 'manual' || !st.activeString) return;
+      const strings = e.strings.map(s => {
+        if (s.id === st.activeString) return { ...s, mods: s.mods.includes(key) ? s.mods.filter(k => k !== key) : [...s.mods, key] };
+        return { ...s, mods: s.mods.filter(k => k !== key) };
+      });
+      st.setElec({ strings });
+    },
     setHouse: h => touch({ ...get().project, house: { ...get().project.house, ...h } }),
     setField: (id, f) => touch({ ...get().project, fields: get().project.fields.map(x => (x.id === id ? { ...x, ...f } : x)) }),
     addField: where => {

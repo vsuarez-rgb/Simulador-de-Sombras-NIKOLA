@@ -1,4 +1,7 @@
-import { distanceToHouse, eaveHeight, TILT_RANGES, type ObsType, type RoofType, type TiltRange } from '../engine/project';
+import { useRef, useState } from 'react';
+import { distanceToHouse, eaveHeight, TILT_RANGES, uid, type ElecTool, type ObsType, type RoofType, type TiltRange } from '../engine/project';
+import { parseWeather, weatherSummary } from '../engine/weather';
+import { STRING_COLORS } from '../sim/viz';
 import { useStore, type Tab } from '../store';
 import { useSim } from '../sim/useSim';
 import { H3, Num, Row, Seg } from './ui';
@@ -29,16 +32,110 @@ function Sitio() {
         <label>UTC<select value={p.site.tz} onChange={e => setSite({ tz: +e.target.value })}>{[-3, -4, -5, -6].map(t => <option key={t} value={t}>{t}</option>)}</select></label>
       </Row>
       <Row><Num label="Albedo suelo" value={p.site.albedo} step={0.05} min={0} max={1} onChange={albedo => setSite({ albedo })} /></Row>
+      <ClimaBox />
       <H3>Módulo FV</H3>
       <Row cols={3}>
         <Num label="Largo" unit="m" value={p.modulo.largo} step={0.001} min={0.5} onChange={largo => setModulo({ largo })} />
         <Num label="Ancho" unit="m" value={p.modulo.ancho} step={0.001} min={0.3} onChange={ancho => setModulo({ ancho })} />
         <Num label="Separación" unit="m" value={p.modulo.gap} step={0.01} min={0} onChange={gap => setModulo({ gap })} />
       </Row>
-      <p className="note">Modelo eléctrico: 72 celdas, 3 diodos bypass (substrings a lo largo del lado largo).</p>
+      <p className="note">Datos eléctricos del módulo en la pestaña Eléctrico.</p>
       <H3>Precisión del cálculo</H3>
       <label>Puntos por celda<select value={sub} onChange={e => set({ sub: +e.target.value, day: null, yearRes: null })}>
         <option value={1}>1 (rápido)</option><option value={2}>4 (recomendado)</option><option value={3}>9 (fino)</option></select></label>
+    </>
+  );
+}
+
+function ClimaBox() {
+  const clima = useStore(s => s.project.clima), site = useStore(s => s.project.site), { setClimaData, setSite } = useStore.getState();
+  const file = useRef<HTMLInputElement>(null);
+  const [err, setErr] = useState('');
+  const sum = clima ? weatherSummary(clima) : null;
+  return (
+    <>
+      <H3>Clima (año típico)</H3>
+      <p className="note">Carga el archivo horario del <a href="https://solarexplorer.minenergia.cl/" target="_blank" rel="noreferrer">Explorador Solar</a> (Descargas → “Datos Horarios TMY SAM” o “Datos Horarios PVsyst”), o un EPW / CSV de PVGIS, Meteonorm, SAM.</p>
+      <div className="addrow">
+        <button className="btn ter" onClick={() => file.current?.click()}>{clima ? 'Cambiar archivo' : 'Cargar archivo de clima'}</button>
+        {clima && <button className="btn ter" onClick={() => setClimaData(null)}>Quitar</button>}
+      </div>
+      <input ref={file} type="file" accept=".csv,.epw,.txt,.json,.tm2" hidden onChange={async e => {
+        const f = e.target.files?.[0]; if (!f) return; setErr('');
+        try {
+          const w = parseWeather(await f.text(), f.name, site);
+          setClimaData(w);
+          if (w.lat != null && w.lon != null && (Math.abs(w.lat - site.lat) > 0.05 || Math.abs(w.lon - site.lon) > 0.05)) setSite({ lat: +w.lat.toFixed(4), lon: +w.lon.toFixed(4), nombre: '' });
+        } catch (x) { setErr((x as Error).message); }
+        e.target.value = '';
+      }} />
+      {err && <div className="warn">⚠ {err}</div>}
+      {clima && sum && <div className="card thin">
+        <div className="eff"><span>{clima.fuente}</span><b>{clima.nombre}</b></div>
+        <p className="note">{sum.n} horas · GHI {sum.ghi.toFixed(0)} kWh/m²·año · DNI {sum.dni.toFixed(0)} · DHI {sum.dhi.toFixed(0)} · T media {sum.tmed.toFixed(1)} °C<br />
+          Zona horaria del archivo UTC{clima.tz >= 0 ? '+' : ''}{clima.tz} · ajuste horario detectado {clima.offset >= 0 ? '+' : ''}{clima.offset} h{clima.lat != null ? ` · ${clima.lat.toFixed(3)}, ${clima.lon?.toFixed(3)}` : ''}</p>
+      </div>}
+    </>
+  );
+}
+
+function Electrico() {
+  const p = useStore(s => s.project), tool = useStore(s => s.tool), active = useStore(s => s.activeString);
+  const { setModulo, setElec, set } = useStore.getState(), { rs, lay } = useSim();
+  const m = p.modulo, e = p.elec;
+  const toManual = () => {
+    // parte desde la asignación automática actual
+    const strings = rs.strings.map(s => ({ id: uid(), nombre: s.name, mppt: s.mppt, mods: s.mods.map(mi => lay.modules[mi].key) }));
+    setElec({ modo: 'manual', strings }); set({ activeString: strings[0]?.id ?? null, tool: 'string' });
+  };
+  const TOOLS: [ElecTool, string][] = [['string', 'Asignar string'], ['optimizador', 'Optimizador'], ['excluir', 'Excluir módulo']];
+  return (
+    <>
+      <H3>Módulo (ficha técnica, STC)</H3>
+      <Row cols={3}>
+        <Num label="Pmax" unit="W" value={m.pmax} step={5} min={50} onChange={pmax => setModulo({ pmax })} />
+        <Num label="Voc" unit="V" value={m.voc} min={5} onChange={voc => setModulo({ voc })} />
+        <Num label="Isc" unit="A" value={m.isc} min={0.5} onChange={isc => setModulo({ isc })} />
+      </Row>
+      <Row cols={3}>
+        <Num label="Vmp" unit="V" value={m.vmp} min={5} onChange={vmp => setModulo({ vmp })} />
+        <Num label="Imp" unit="A" value={m.imp} min={0.5} onChange={imp => setModulo({ imp })} />
+        <label>Celdas<select value={m.celdas} onChange={x => setModulo({ celdas: +x.target.value as 60 | 72 })}><option value={60}>60 (120 half-cut)</option><option value={72}>72 (144 half-cut)</option></select></label>
+      </Row>
+      <Row cols={3}>
+        <Num label="Coef. Pmax" unit="%/°C" value={m.gammaP} step={0.01} onChange={gammaP => setModulo({ gammaP })} />
+        <Num label="NOCT" unit="°C" value={m.noct} step={1} onChange={noct => setModulo({ noct })} />
+      </Row>
+      <p className="note">Vmp×Imp = {(m.vmp * m.imp).toFixed(0)} W{Math.abs(m.vmp * m.imp - m.pmax) > m.pmax * 0.03 ? ' ⚠ no coincide con Pmax' : ''}. Half-cut se modela como celdas completas equivalentes (resultado conservador ante sombra en la fila inferior).</p>
+      <H3>Inversor</H3>
+      <Row cols={3}>
+        <Num label="MPPT mín." unit="V" value={e.mpptMin} step={5} min={0} onChange={mpptMin => setElec({ mpptMin })} />
+        <Num label="MPPT máx." unit="V" value={e.mpptMax} step={5} min={10} onChange={mpptMax => setElec({ mpptMax })} />
+        <Num label="N° MPPT" value={e.nMppt} step={1} min={1} max={12} onChange={v => setElec({ nMppt: Math.round(v) })} />
+      </Row>
+      <Row cols={3}><Num label="Efic. optimizador" unit="%" value={+(e.optEff * 100).toFixed(1)} step={0.1} min={90} max={100} onChange={v => setElec({ optEff: v / 100 })} /></Row>
+      <H3>Strings</H3>
+      <Seg value={e.modo} options={[['auto', 'Automático'], ['manual', 'Manual']]} onChange={v => (v === 'manual' ? toManual() : setElec({ modo: 'auto' }))} />
+      {e.modo === 'auto' && <Row cols={3}><Num label="Módulos por string" value={e.modsPorString} step={1} min={1} max={40} onChange={v => setElec({ modsPorString: Math.round(v) })} /></Row>}
+      {e.modo === 'auto' && <p className="note">Se cablea por campo, fila por fila en serpentina, y los strings se reparten entre los MPPT.</p>}
+      {e.modo === 'manual' && <>
+        <div className="list">{e.strings.map((s, i) => (
+          <div key={s.id} className={'item row-item' + (active === s.id ? ' on' : '')} onClick={() => set({ activeString: s.id, tool: 'string' })}>
+            <span className="chip" style={{ background: STRING_COLORS[i % STRING_COLORS.length] }} />
+            <input className="sname" value={s.nombre} onChange={x => setElec({ strings: e.strings.map(t => (t.id === s.id ? { ...t, nombre: x.target.value } : t)) })} />
+            <span>{s.mods.length} mód.</span>
+            <select value={s.mppt} onClick={x => x.stopPropagation()} onChange={x => setElec({ strings: e.strings.map(t => (t.id === s.id ? { ...t, mppt: +x.target.value } : t)) })}>
+              {Array.from({ length: e.nMppt }, (_, k) => <option key={k} value={k}>MPPT {k + 1}</option>)}</select>
+            <button className="x" onClick={x => { x.stopPropagation(); setElec({ strings: e.strings.filter(t => t.id !== s.id) }); }}>✕</button>
+          </div>))}
+        </div>
+        <button className="btn ter" onClick={() => { const id = uid(); setElec({ strings: [...e.strings, { id, nombre: `S${e.strings.length + 1}`, mppt: e.strings.length % e.nMppt, mods: [] }] }); set({ activeString: id, tool: 'string' }); }}>+ String</button>
+      </>}
+      <H3>Herramienta en 3D</H3>
+      <Seg value={tool} options={TOOLS} onChange={t => set({ tool: t })} />
+      <p className="note">{tool === 'string' ? (e.modo === 'manual' ? 'Haz clic en los módulos para agregarlos o quitarlos del string activo (en el orden de conexión).' : 'Cambia a modo Manual para armar los strings a mano.') : tool === 'optimizador' ? 'Haz clic en un módulo para ponerle o quitarle un optimizador (marcado en amarillo).' : 'Haz clic en un módulo para sacarlo del sistema (queda en gris; sigue dando sombra).'}</p>
+      <p className="note">{rs.optimized.length} optimizador(es) · {rs.excluded.length} módulo(s) excluido(s) · {rs.strings.length} string(s)</p>
+      {rs.avisos.map(a => <div key={a} className="warn">⚠ {a}</div>)}
     </>
   );
 }
@@ -175,12 +272,12 @@ function Objetos() {
 
 export default function Sidebar() {
   const tab = useStore(s => s.tab), set = useStore(s => s.set);
-  const TABS: [Tab, string][] = [['sitio', 'Sitio'], ['casa', 'Casa'], ['paneles', 'Paneles'], ['objetos', 'Objetos']];
+  const TABS: [Tab, string][] = [['sitio', 'Sitio'], ['casa', 'Casa'], ['paneles', 'Paneles'], ['objetos', 'Objetos'], ['electrico', 'Eléctrico']];
   return (
     <aside>
       <div className="tabsbar">{TABS.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => set({ tab: k })}>{l}</button>)}</div>
       <div className="pane">
-        {tab === 'sitio' && <Sitio />}{tab === 'casa' && <Casa />}{tab === 'paneles' && <Paneles />}{tab === 'objetos' && <Objetos />}
+        {tab === 'sitio' && <Sitio />}{tab === 'casa' && <Casa />}{tab === 'paneles' && <Paneles />}{tab === 'objetos' && <Objetos />}{tab === 'electrico' && <Electrico />}
       </div>
     </aside>
   );

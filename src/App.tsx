@@ -66,7 +66,7 @@ function Header() {
   return (
     <header>
       <Logo />
-      <div className="ttl"><div className="lbl">SIMULADOR DE SOMBRAS FV · v0.2</div>
+      <div className="ttl"><div className="lbl">SIMULADOR DE SOMBRAS FV · v0.3</div>
         <input className="pname" value={project.nombre} onChange={e => setProject({ ...project, nombre: e.target.value })} /></div>
       <div className="sp" />
       {msg && <span className="flash">{msg}</span>}

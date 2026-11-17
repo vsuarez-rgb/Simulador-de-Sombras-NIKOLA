@@ -9,7 +9,7 @@ export const mul = (a: V3, k: number): V3 => [a[0] * k, a[1] * k, a[2] * k];
 export const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
 export interface Table { id: number; field: number; P: V3; u: V3; v: V3; n: V3; W: number; L: number }
-export interface Module { id: string; field: number; table: number; a0: number; b0: number; mw: number; ml: number; nu: number; nv: number; portrait: boolean }
+export interface Module { id: string; key: string; field: number; table: number; a0: number; b0: number; mw: number; ml: number; nu: number; nv: number; portrait: boolean }
 export interface Box { type: 'box'; c: V3; h: V3; ex: V3; ez: V3; rot: number; kind: string }
 export interface Sph { type: 'sph'; c: V3; r: number; kind: string }
 export interface Cyl { type: 'cyl'; c: [number, number]; r: number; y0: number; y1: number; kind: string }
@@ -125,7 +125,7 @@ export function cellPoint(lay: Layout, m: Module, iu: number, iv: number, fu = 0
   const a = m.a0 + (iu + fu) * m.mw / m.nu, b = m.b0 + (iv + fv) * m.ml / m.nv;
   return add(add(add(t.P, mul(t.u, a)), mul(t.v, b)), mul(t.n, 0.005));
 }
-const substringOf = (m: Module, iu: number, iv: number) => (m.portrait ? Math.floor(iu / 2) : Math.floor(iv / 2));
+export const substringOf = (m: Module, iu: number, iv: number) => (m.portrait ? Math.floor(iu / 2) : Math.floor(iv / 2));
 
 /** Fracción de la difusa isotrópica bloqueada para cada módulo (ponderada por coseno). */
 export function diffuseShading(lay: Layout): number[] {
@@ -146,16 +146,55 @@ export function diffuseShading(lay: Layout): number[] {
   });
 }
 
-export interface ModStep { geom: number; Gb: number; Gd: number; Gd0: number; Gr: number; Gtot: number; Psh: number; cells: Float32Array; Isub: number[] }
-/** Un instante: sombra por celda (sub×sub puntos) y pérdida eléctrica con 3 diodos bypass. */
-export function computeStep(lay: Layout, sv: V3, irr: Irr, fdiff: number[], albedo = 0.2, sub = 2): ModStep[] {
+// ---------- Transposición Perez (1990, allsitescomposite) ----------
+const PEREZ_EPS = [1.065, 1.23, 1.5, 1.95, 2.8, 4.5, 6.2];
+const PEREZ_F = [
+  [-0.0083117, 0.5877285, -0.0620636, -0.0596012, 0.0721249, -0.0220216],
+  [0.1299457, 0.6825954, -0.1513752, -0.0189325, 0.065965, -0.0288748],
+  [0.3296958, 0.4868735, -0.2210958, 0.055414, -0.0639588, -0.0260542],
+  [0.5682053, 0.1874525, -0.295129, 0.1088631, -0.1519229, -0.0139754],
+  [0.873028, -0.3920403, -0.3616149, 0.2255647, -0.4620442, 0.0012448],
+  [1.1326077, -1.2367284, -0.4118494, 0.2877813, -0.8230357, 0.0558651],
+  [1.0601591, -1.5999137, -0.3589221, 0.2642124, -1.127234, 0.1310694],
+  [0.677747, -0.3272588, -0.2504286, 0.1561313, -0.3785302, 0.1888],
+];
+/** Coeficientes F1 (circunsolar) y F2 (brillo de horizonte) de Perez. */
+export function perezF(irr: Irr, el: number, doy: number) {
+  if (irr.dhi <= 0 || el <= 0) return { F1: 0, F2: 0 };
+  const z = (90 - el) * D2R, zd = 90 - el;
+  const am = 1 / (Math.cos(z) + 0.50572 * Math.pow(96.07995 - zd, -1.6364));
+  const dniExtra = 1367 * (1 + 0.033 * Math.cos((2 * Math.PI * doy) / 365));
+  const delta = (irr.dhi * am) / dniExtra, k = 1.041 * z * z * z;
+  const eps = ((irr.dhi + irr.dni) / irr.dhi + k) / (1 + k);
+  let bin = PEREZ_EPS.findIndex(e => eps < e); if (bin < 0) bin = 7;
+  const f = PEREZ_F[bin];
+  return { F1: Math.max(0, f[0] + f[1] * delta + f[2] * z), F2: f[3] + f[4] * delta + f[5] * z };
+}
+
+export interface StepOpts { albedo?: number; sub?: number; doy?: number; el?: number }
+/**
+ * Un instante. Por módulo:
+ *  - cells: fracción sombreada de cada celda (0..1)
+ *  - Gbc: componente "direccional" (directa + circunsolar) que se sombrea celda a celda
+ *  - Gdu: componente uniforme (difusa isotrópica + horizonte, ya descontado el cielo bloqueado, + albedo)
+ *  - Gref: irradiancia total sin ninguna sombra
+ */
+export interface ModStep { geom: number; Gb: number; Gbc: number; Gdu: number; Gref: number; GdLost: number; Gtot: number; Psh: number; cells: Float32Array; Isub: number[] }
+export function computeStep(lay: Layout, sv: V3, irr: Irr, fdiff: number[], opts: StepOpts = {}): ModStep[] {
+  const albedo = opts.albedo ?? 0.2, sub = opts.sub ?? 2;
+  const el = opts.el ?? Math.asin(Math.max(-1, Math.min(1, sv[1]))) * R2D;
+  const { F1, F2 } = opts.doy != null ? perezF(irr, el, opts.doy) : { F1: 0, F2: 0 };
+  const cz = Math.max(Math.cos(85 * D2R), sv[1]);
   const offs: number[] = []; for (let i = 0; i < sub; i++) offs.push((i + 0.5) / sub);
   const ns = sub * sub;
   return lay.modules.map((m, mi) => {
-    const t = lay.tables[m.table], cb = t.n[1];
+    const t = lay.tables[m.table], cb = t.n[1], sb = Math.sqrt(Math.max(0, 1 - cb * cb));
     const cosAOI = dot(sv, t.n);
     const Gb = sv[1] > 0 ? irr.dni * Math.max(0, cosAOI) : 0;
-    const Gd0 = irr.dhi * (1 + cb) / 2, Gr = irr.ghi * albedo * (1 - cb) / 2;
+    const Giso = irr.dhi * (1 - F1) * (1 + cb) / 2;
+    const Gcirc = irr.dhi * F1 * Math.max(0, cosAOI) / cz;
+    const Ghor = irr.dhi * F2 * sb;
+    const Gr = irr.ghi * albedo * (1 - cb) / 2;
     const nc = m.nu * m.nv, cells = new Float32Array(nc);
     let shaded = 0;
     if (Gb > 0) for (let iv = 0; iv < m.nv; iv++) for (let iu = 0; iu < m.nu; iu++) {
@@ -163,15 +202,19 @@ export function computeStep(lay: Layout, sv: V3, irr: Irr, fdiff: number[], albe
       for (const fu of offs) for (const fv of offs) if (occluded(cellPoint(lay, m, iu, iv, fu, fv), sv, lay, m.table)) k++;
       if (k) { cells[iv * m.nu + iu] = k / ns; shaded += k / ns; }
     }
-    const Gd = Gd0 * (1 - fdiff[mi]), Gtot = Gb + Gd0 + Gr;
+    const fd = fdiff[mi] ?? 0;
+    const Gbc = Gb + Gcirc;
+    const Gdu = Math.max(0, (Giso + Ghor) * (1 - fd) + Gr);
+    const Gref = Math.max(0, Gbc + Giso + Ghor + Gr);
+    // Modelo rápido por módulo (3 diodos bypass): corriente de cada substring limitada por su celda más sombreada
     const Isub = [Infinity, Infinity, Infinity];
     for (let iv = 0; iv < m.nv; iv++) for (let iu = 0; iu < m.nu; iu++) {
-      const g = Gb * (1 - cells[iv * m.nu + iu]) + Gd + Gr, s = substringOf(m, iu, iv);
+      const g = Gbc * (1 - cells[iv * m.nu + iu]) + Gdu, s = substringOf(m, iu, iv);
       if (g < Isub[s]) Isub[s] = g;
     }
     let best = 0;
     for (const I of Isub) { let c = 0; for (const J of Isub) if (J >= I - 1e-9) c++; best = Math.max(best, I * c); }
-    return { geom: Gb > 0 ? shaded / nc : 0, Gb, Gd, Gd0, Gr, Gtot, Psh: best / 3, cells, Isub };
+    return { geom: Gb > 0 ? shaded / nc : 0, Gb, Gbc, Gdu, Gref, GdLost: (Giso + Ghor) * fd, Gtot: Gref, Psh: best / 3, cells, Isub };
   });
 }
 
@@ -182,7 +225,7 @@ export const newAcc = (lay: Layout): Acc[] => lay.modules.map(m => ({ Gb: 0, GbS
 export function accumulate(acc: Acc[], res: ModStep[], w: number) {
   res.forEach((r, i) => {
     const a = acc[i];
-    a.Gb += r.Gb * w; a.GbSh += r.Gb * r.geom * w; a.GdLost += (r.Gd0 - r.Gd) * w; a.Gtot += r.Gtot * w; a.Psh += r.Psh * w;
+    a.Gb += r.Gb * w; a.GbSh += r.Gb * r.geom * w; a.GdLost += r.GdLost * w; a.Gtot += r.Gtot * w; a.Psh += r.Psh * w;
     if (r.Gb > 0) for (let c = 0; c < r.cells.length; c++) if (r.cells[c]) a.cell[c] += r.Gb * r.cells[c] * w;
   });
 }

@@ -22,17 +22,43 @@ export interface Field {
 }
 export type ObsType = 'arbol' | 'poste' | 'edificio' | 'muro' | 'chimenea';
 export interface Obstacle { id: string; tipo: ObsType; x: number; y: number; alto: number; ancho: number; largo: number; rot: number; copa: number }
-export interface ModuleSpec { largo: number; ancho: number; gap: number }
+export interface ModuleSpec {
+  largo: number; ancho: number; gap: number;
+  pmax: number; voc: number; isc: number; vmp: number; imp: number; celdas: 60 | 72; gammaP: number; noct: number;
+}
+export type ElecTool = 'string' | 'optimizador' | 'excluir';
+export interface StringCfg { id: string; nombre: string; mppt: number; mods: string[] }
+export interface ElecConfig {
+  mpptMin: number; mpptMax: number; nMppt: number; optEff: number;
+  modo: 'auto' | 'manual'; modsPorString: number;
+  strings: StringCfg[]; optimizados: string[]; excluidos: string[];
+}
+export interface Weather {
+  nombre: string; fuente: string; tz: number; offset: number; lat?: number; lon?: number;
+  // horas UTC del año: mes, día, hora UTC decimal (centro del intervalo), irradiancias W/m², temperatura °C
+  m: number[]; d: number[]; h: number[]; ghi: number[]; dni: number[]; dhi: number[]; ta: number[];
+}
 export interface Site { nombre: string; lat: number; lon: number; tz: number; albedo: number }
-export interface Project { version: 2; nombre: string; site: Site; modulo: ModuleSpec; house: House; fields: Field[]; obstacles: Obstacle[] }
+export interface Project { version: 2; nombre: string; site: Site; modulo: ModuleSpec; house: House; fields: Field[]; obstacles: Obstacle[]; elec: ElecConfig; clima?: Weather | null }
 
+export const DEFAULT_MODULE: ModuleSpec = {
+  largo: 2.278, ancho: 1.134, gap: 0.02, pmax: 550, voc: 49.6, isc: 14.0, vmp: 41.6, imp: 13.22, celdas: 72, gammaP: -0.35, noct: 45,
+};
+export const DEFAULT_ELEC: ElecConfig = {
+  mpptMin: 90, mpptMax: 560, nMppt: 2, optEff: 0.99, modo: 'auto', modsPorString: 10, strings: [], optimizados: [], excluidos: [],
+};
+/** Completa proyectos guardados con versiones anteriores. */
+export function migrate(p: Project): Project {
+  return { ...p, modulo: { ...DEFAULT_MODULE, ...p.modulo }, elec: { ...DEFAULT_ELEC, ...(p.elec ?? {}) }, clima: p.clima ?? null };
+}
 export const uid = () => Math.random().toString(36).slice(2, 8);
 
 export function defaultProject(): Project {
   return {
     version: 2, nombre: 'Proyecto nuevo',
     site: { nombre: 'Santiago', lat: -33.45, lon: -70.66, tz: -3, albedo: 0.2 },
-    modulo: { largo: 2.278, ancho: 1.134, gap: 0.02 },
+    modulo: DEFAULT_MODULE,
+    elec: DEFAULT_ELEC, clima: null,
     house: { enabled: true, x: 0, y: 0, rot: 0, ancho: 12, fondo: 8, pisos: 2, altoPiso: 2.6, techo: 'dos_aguas', pendiente: 25, alero: 0.5, parapeto: 0.8 },
     fields: [
       { id: uid(), nombre: 'Techo norte', x: 0, y: 2.2, montaje: 'coplanar', rango: '10-15', tilt: 12, azim: 0, filas: 2, mods: 5, enAlto: 1, orient: 'V', pitch: 3, altura: 0.12 },
@@ -161,7 +187,8 @@ export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] }
     const v: V3 = add(mul(fdir, -Math.cos(beta)), [0, Math.sin(beta), 0]);
     const n: V3 = add(mul(fdir, Math.sin(beta)), [0, Math.cos(beta), 0]);
     const portrait = f.orient === 'V', mw = portrait ? ancho : largo, ml = portrait ? largo : ancho;
-    const nu = portrait ? 6 : 12, nv = portrait ? 12 : 6;
+    const nLong = (p.modulo.celdas ?? 72) / 6;
+    const nu = portrait ? 6 : nLong, nv = portrait ? nLong : 6;
     const W = f.mods * mw + (f.mods - 1) * gap, L = f.enAlto * ml + (f.enAlto - 1) * gap;
     const coplanar = f.montaje === 'coplanar';
     const pitch = coplanar ? (L + 0.05) * Math.cos(beta) : f.pitch;
@@ -187,6 +214,7 @@ export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] }
       for (let k = 0; k < f.enAlto; k++) for (let c = 0; c < f.mods; c++) {
         modules.push({
           id: `${fi + 1}.${i + 1}${f.enAlto > 1 ? String.fromCharCode(97 + k) : ''}.${c + 1}`,
+          key: `${f.id}|${i}|${k}|${c}`,
           field: fi, table: id, a0: c * (mw + gap), b0: k * (ml + gap), mw, ml, nu, nv, portrait,
         });
       }
@@ -238,4 +266,46 @@ export function distanceToHouse(p: Project, ob: Obstacle): { d: number; a: [numb
   const dc = Math.hypot(lx - cx, lz - cz);
   const w = toWorld(h, cx, 0, cz);
   return { d: inside ? 0 : Math.max(0, dc - rad), a: [ob.x, ob.y], b: [w[0], -w[2]], inside };
+}
+
+// ---------- Strings ----------
+export interface ResolvedStrings { strings: { name: string; mppt: number; mods: number[] }[]; optimized: number[]; excluded: number[]; avisos: string[]; stringOf: number[] }
+/** Convierte la configuración eléctrica (auto o manual) en índices de módulos. */
+export function resolveStrings(p: Project, lay: Layout): ResolvedStrings {
+  const e = p.elec, idx = new Map(lay.modules.map((m, i) => [m.key, i]));
+  const excluded = e.excluidos.map(k => idx.get(k)).filter((i): i is number => i != null);
+  const exSet = new Set(excluded);
+  const optimized = e.optimizados.map(k => idx.get(k)).filter((i): i is number => i != null && !exSet.has(i));
+  const strings: ResolvedStrings['strings'] = [], avisos: string[] = [];
+  if (e.modo === 'auto') {
+    const n = Math.max(1, Math.round(e.modsPorString));
+    p.fields.forEach((_, fi) => {
+      // orden en serpentina por fila (como se cablea en terreno)
+      const mods = lay.modules.map((m, i) => ({ m, i })).filter(x => x.m.field === fi && !exSet.has(x.i));
+      const rows = new Map<string, typeof mods>();
+      for (const x of mods) { const k = `${x.m.table}|${x.m.b0}`; if (!rows.has(k)) rows.set(k, []); rows.get(k)!.push(x); }
+      const order: number[] = [];
+      [...rows.values()].forEach((r, ri) => { r.sort((a, b) => a.m.a0 - b.m.a0); if (ri % 2) r.reverse(); order.push(...r.map(x => x.i)); });
+      for (let s = 0; s < order.length; s += n) strings.push({ name: `S${strings.length + 1}`, mppt: 0, mods: order.slice(s, s + n) });
+    });
+    strings.forEach((s, i) => { s.mppt = i % Math.max(1, e.nMppt); });
+  } else {
+    for (const sc of e.strings) {
+      const mods = sc.mods.map(k => idx.get(k)).filter((i): i is number => i != null && !exSet.has(i));
+      if (mods.length) strings.push({ name: sc.nombre, mppt: Math.min(sc.mppt, e.nMppt - 1), mods });
+    }
+  }
+  const stringOf = lay.modules.map(() => -1);
+  strings.forEach((s, si) => s.mods.forEach(mi => { stringOf[mi] = si; }));
+  const sinString = lay.modules.filter((_, i) => stringOf[i] < 0 && !exSet.has(i)).length;
+  if (sinString) avisos.push(`${sinString} módulo(s) sin string asignado: no se cuentan en la energía`);
+  const vmp = p.modulo.vmp, voc = p.modulo.voc;
+  for (const s of strings) {
+    if (s.mods.length * vmp < e.mpptMin) avisos.push(`${s.name}: Vmp ≈ ${(s.mods.length * vmp).toFixed(0)} V bajo el mínimo MPPT (${e.mpptMin} V)`);
+    if (s.mods.length * voc * 1.12 > e.mpptMax * 1.1) avisos.push(`${s.name}: Voc en frío ≈ ${(s.mods.length * voc * 1.12).toFixed(0)} V, revisa el máximo del inversor`);
+  }
+  const byM = new Map<number, number[]>();
+  strings.forEach(s => { if (!byM.has(s.mppt)) byM.set(s.mppt, []); byM.get(s.mppt)!.push(s.mods.length); });
+  for (const [mp, ls] of byM) if (new Set(ls).size > 1) avisos.push(`MPPT ${mp + 1}: strings en paralelo con distinto número de módulos`);
+  return { strings, optimized, excluded, avisos, stringOf };
 }

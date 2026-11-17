@@ -1,12 +1,14 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { clearSky, computeStep, diffuseShading, sunPosition, sunVector, type Layout, type ModStep } from '../engine/engine';
-import { buildLayout, type FieldInfo } from '../engine/project';
+import { clearSky, computeStep, dayOfYear, diffuseShading, sunPosition, sunVector, type Layout, type ModStep } from '../engine/engine';
+import { buildLayout, resolveStrings, type FieldInfo, type Project, type ResolvedStrings } from '../engine/project';
+import { fitCell, type ElecSetup } from '../engine/electrical';
 import { useStore } from '../store';
 
 export interface SimCtx {
   lay: Layout; fieldInfo: FieldInfo[]; fdiff: number[];
   sun: { el: number; az: number; vec: [number, number, number]; dni: number; ghi: number };
   instant: ModStep[] | null;
+  rs: ResolvedStrings; es: ElecSetup;
 }
 export const SimContext = createContext<SimCtx | null>(null);
 export const useSim = () => useContext(SimContext)!;
@@ -31,7 +33,17 @@ export function useSimState(): SimCtx {
   }, [fecha, hora, project.site]);
   const instant = useMemo(() => {
     if (sun.el <= 0 || fdiff.length !== lay.modules.length) return null;
-    return computeStep(lay, sun.vec, sun.irr, fdiff, project.site.albedo, sub);
-  }, [lay, fdiff, sun, sub, project.site.albedo]);
-  return { lay, fieldInfo, fdiff, sun, instant };
+    const { y, m, d } = parseFecha(fecha);
+    return computeStep(lay, sun.vec, sun.irr, fdiff, { albedo: project.site.albedo, sub, doy: dayOfYear(y, m, d), el: sun.el });
+  }, [lay, fdiff, sun, sub, project.site.albedo, fecha]);
+  const { rs, es } = useMemo(() => elecSetup(project, lay), [project, lay]);
+  return { lay, fieldInfo, fdiff, sun, instant, rs, es };
+}
+
+export function elecSetup(p: Project, lay: Layout): { rs: ResolvedStrings; es: ElecSetup } {
+  const rs = resolveStrings(p, lay), e = p.elec;
+  return {
+    rs,
+    es: { cell: fitCell(p.modulo), strings: rs.strings, optimized: rs.optimized, mpptMin: e.mpptMin, mpptMax: e.mpptMax, optEff: e.optEff, gammaP: p.modulo.gammaP, noct: p.modulo.noct },
+  };
 }

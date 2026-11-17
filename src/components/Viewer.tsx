@@ -6,12 +6,12 @@ import type { Box, Module, Prim, Table } from '../engine/engine';
 import { distanceToHouse, housePrims, obstaclePrims, surfaceHeight } from '../engine/project';
 import { useStore } from '../store';
 import { parseFecha, useSim } from '../sim/useSim';
-import { drawModule, pct, PX } from '../sim/viz';
+import { drawModule, drawModuleElec, pct, PX } from '../sim/viz';
 import { sunPosition, sunVector } from '../engine/engine';
 
 const v3 = (a: number[]) => new THREE.Vector3(a[0], a[1], a[2]);
 export type CamKind = '3d' | 'top' | 'sun';
-export const camBus = { fn: (_k: CamKind) => { } };
+export const camBus: { fn: (k: CamKind) => void } = { fn: () => { } };
 
 // ---------- primitivas ----------
 const MAT = {
@@ -86,7 +86,9 @@ function HouseMesh() {
 
 // ---------- módulos ----------
 function ModuleMesh({ m, t, idx }: { m: Module; t: Table; idx: number }) {
-  const { instant } = useSim();
+  const { instant, rs } = useSim();
+  const elecView = useStore(s => s.tab === 'electrico'), clickElec = useStore(s => s.clickModuleElec);
+  const sIdx = rs.stringOf[idx], isOpt = rs.optimized.includes(idx), isEx = rs.excluded.includes(idx);
   const mode = useStore(s => s.mode), day = useStore(s => s.day), yearRes = useStore(s => s.yearRes);
   const selModule = useStore(s => s.selModule), set = useStore(s => s.set), showLabels = useStore(s => s.showLabels), fields = useStore(s => s.project.fields);
   const { cv, tex, geo, center } = useMemo(() => {
@@ -102,16 +104,24 @@ function ModuleMesh({ m, t, idx }: { m: Module; t: Table; idx: number }) {
   const R = mode === 'dia' ? day : mode === 'anio' ? yearRes : null;
   const heatMode = mode !== 'instante' && !!R;
   const cells = heatMode ? R!.mods[idx]?.cell : instant?.[idx]?.cells ?? null;
-  useEffect(() => { drawModule(cv, m, cells, heatMode, !instant && !heatMode, idx === selModule); tex.needsUpdate = true; }, [cv, tex, m, cells, heatMode, instant, idx, selModule]);
+  useEffect(() => {
+    if (elecView) drawModuleElec(cv, m, sIdx, isOpt, isEx, idx === selModule);
+    else drawModule(cv, m, cells, heatMode, !instant && !heatMode, idx === selModule);
+    tex.needsUpdate = true;
+  }, [cv, tex, m, cells, heatMode, instant, idx, selModule, elecView, sIdx, isOpt, isEx]);
   const metric = heatMode ? R!.mods[idx]?.perdElec : instant ? instant[idx].geom : undefined;
   return (
     <>
-      <mesh geometry={geo} castShadow onClick={e => { e.stopPropagation(); set({ selModule: idx, sel: { kind: 'field', id: fields[m.field].id }, tab: 'paneles' }); }}>
+      <mesh geometry={geo} castShadow onClick={e => {
+        e.stopPropagation();
+        if (elecView) { clickElec(m.key); set({ selModule: idx }); return; }
+        set({ selModule: idx, sel: { kind: 'field', id: fields[m.field].id }, tab: 'paneles' });
+      }}>
         <meshStandardMaterial map={tex} roughness={0.35} metalness={0.1} side={THREE.DoubleSide} />
       </mesh>
       {showLabels && (
         <Html position={center.clone().addScaledVector(v3(t.n), 0.15)} center style={{ pointerEvents: 'none' }} zIndexRange={[10, 0]}>
-          <div className={'lab' + (idx === selModule ? ' hi' : '')}>{m.id}{metric !== undefined ? ` · ${pct(metric)}` : ''}</div>
+          <div className={'lab' + (idx === selModule ? ' hi' : '')}>{m.id}{elecView ? (isEx ? ' · excluido' : sIdx >= 0 ? ` · ${rs.strings[sIdx].name}${isOpt ? ' · OPT' : ''}` : ' · sin string') : metric !== undefined ? ` · ${pct(metric)}` : ''}</div>
         </Html>
       )}
     </>

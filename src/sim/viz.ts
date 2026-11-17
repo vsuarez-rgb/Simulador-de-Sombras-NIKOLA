@@ -30,3 +30,17 @@ export function drawModule(cv: HTMLCanvasElement, m: Module, cells: ArrayLike<nu
   for (let iv = 0; iv <= m.nv; iv++) { g.beginPath(); g.moveTo(0, iv * PX + 0.5); g.lineTo(cv.width, iv * PX + 0.5); g.stroke(); }
   g.strokeStyle = selected ? '#FAB704' : '#d5dde3'; g.lineWidth = selected ? 6 : 3; g.strokeRect(0, 0, cv.width, cv.height);
 }
+
+export const STRING_COLORS = ['#3a78b0', '#2FA35A', '#b0563a', '#8a5ab0', '#2aa1a8', '#a8892a', '#c0487a', '#5a6fb0'];
+/** Vista eléctrica: color del string, optimizador (borde amarillo + punto) y excluidos (gris tachado). */
+export function drawModuleElec(cv: HTMLCanvasElement, m: Module, stringIdx: number, opt: boolean, excl: boolean, selected: boolean) {
+  const g = cv.getContext('2d')!;
+  g.fillStyle = excl ? '#5d6670' : stringIdx >= 0 ? STRING_COLORS[stringIdx % STRING_COLORS.length] : '#16293a';
+  g.fillRect(0, 0, cv.width, cv.height);
+  g.strokeStyle = 'rgba(255,255,255,.25)'; g.lineWidth = 1;
+  for (let iu = 0; iu <= m.nu; iu++) { g.beginPath(); g.moveTo(iu * PX + 0.5, 0); g.lineTo(iu * PX + 0.5, cv.height); g.stroke(); }
+  for (let iv = 0; iv <= m.nv; iv++) { g.beginPath(); g.moveTo(0, iv * PX + 0.5); g.lineTo(cv.width, iv * PX + 0.5); g.stroke(); }
+  if (excl) { g.strokeStyle = '#d2402e'; g.lineWidth = 6; g.beginPath(); g.moveTo(0, 0); g.lineTo(cv.width, cv.height); g.moveTo(cv.width, 0); g.lineTo(0, cv.height); g.stroke(); }
+  if (opt) { g.fillStyle = '#FAB704'; g.beginPath(); g.arc(cv.width / 2, cv.height / 2, PX * 1.4, 0, Math.PI * 2); g.fill(); }
+  g.strokeStyle = opt ? '#FAB704' : selected ? '#ffffff' : '#d5dde3'; g.lineWidth = opt || selected ? 8 : 3; g.strokeRect(0, 0, cv.width, cv.height);
+}
