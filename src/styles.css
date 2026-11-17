@@ -64,6 +64,7 @@ main.nores>.res{display:none}
 .viewbtns button.on{border-color:var(--am);color:var(--am)}
 .suninfo{top:8px;right:8px;background:rgba(8,37,55,.85);border-radius:8px;padding:6px 10px;flex-direction:column;gap:1px;font-size:11px}
 .suninfo b{color:var(--am);font-family:var(--tit)}
+.suninfo .day{margin-top:2px;padding-top:3px;border-top:1px solid var(--linea);color:#dfe7ec}
 .legend{bottom:8px;right:8px;background:rgba(8,37,55,.85);border-radius:8px;padding:6px 10px;flex-direction:column;gap:3px;font-size:10px;min-width:200px}
 .legend .colorby{display:flex;align-items:center;gap:6px}
 .legend .colorby .seg{margin:0;flex:1}
@@ -72,13 +73,21 @@ main.nores>.res{display:none}
 .legend .bar{height:10px;border-radius:5px;background:linear-gradient(90deg,#2FA35A,#FAB704 33%,#D2402E)}
 .legend .bar.inst{background:linear-gradient(90deg,rgb(58,120,176),rgb(8,15,20))}
 .legend .ticks{display:flex;justify-content:space-between;color:#c9d4dc}
-.timebar{bottom:8px;left:8px;right:222px;background:rgba(8,37,55,.85);border-radius:8px;padding:5px 10px;align-items:center;gap:8px}
+.timebar{bottom:8px;left:8px;right:222px;background:rgba(8,37,55,.85);border-radius:8px;padding:5px 10px;align-items:center;gap:8px;flex-wrap:wrap}
+.timebar .months{display:flex;gap:2px;flex:none}
+.timebar .months button{background:transparent;color:#c9d4dc;border:1px solid var(--linea);border-radius:10px;padding:2px 5px;font-family:var(--tit);font-size:9px;font-weight:600;cursor:pointer;touch-action:manipulation}
+.timebar .months button:hover{border-color:var(--am)}
+.timebar .months button.on{background:var(--am);border-color:var(--am);color:var(--azul)}
 .timebar input[type=date]{width:auto}
-.timebar input[type=range]{flex:1}
+.timebar input[type=range]{flex:1;min-width:120px}
 .timebar .hr{font-family:var(--tit);font-weight:600;color:var(--am);min-width:42px}
 .play{background:var(--am);color:var(--azul);border:0;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:11px;flex:none}
 .lab{font-family:var(--tit);font-size:10px;font-weight:600;color:#fff;background:rgba(8,37,55,.8);padding:1px 5px;border-radius:4px;white-space:nowrap;user-select:none}
 .lab.hi{background:var(--am);color:var(--azul)}
+.lab.hora{background:rgba(250,183,4,.92);color:var(--azul);font-size:9px;padding:0 4px}
+.lab.ref{background:rgba(255,255,255,.88);color:var(--azul);border-left:3px solid;font-weight:500;font-size:9px}
+.lab.card{background:transparent;color:var(--azul);font-size:13px;font-weight:800;padding:0}
+.lab.card.n{color:#c0392b}
 .dim{font-family:var(--tit);font-size:11px;font-weight:700;color:var(--azul);background:#fff;border:1px solid var(--azul);padding:1px 6px;border-radius:10px;white-space:nowrap;user-select:none}
 .dim.hi{background:var(--am);border-color:var(--am)}
 .res{background:var(--azul);border-top:1px solid var(--linea);display:grid;grid-template-columns:minmax(380px,1.15fr) minmax(0,1fr);min-height:0;min-width:0}

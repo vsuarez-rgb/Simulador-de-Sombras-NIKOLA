@@ -19,7 +19,7 @@ interface State {
   project: Project;
   sel: Sel; tab: Tab; mode: Mode;
   fecha: string; hora: number; sub: number; clima: Clima; tool: ElecTool; activeString: string | null;
-  showLabels: boolean; showDims: boolean; selModule: number;
+  showLabels: boolean; showDims: boolean; showSunPath: boolean; selModule: number;
   hideSide: boolean; hideRes: boolean;
   /** Mapa de calor de Día/Año: detalle por celda o un color por panel (pérdida eléctrica). */
   colorBy: ColorBy;
@@ -71,7 +71,7 @@ export const useStore = create<State>((set, get) => {
     project: load(),
     sel: null, tab: 'casa', mode: 'instante',
     fecha: `${year}-06-21`, hora: 15, sub: 2, clima: 'despejado', tool: 'string', activeString: null,
-    showLabels: true, showDims: true, selModule: -1,
+    showLabels: true, showDims: true, showSunPath: true, selModule: -1,
     hideSide: false, hideRes: false, colorBy: 'celda', stale: false,
     day: null, yearRes: null, busy: null, error: null, pvgisCache: null,
     resetStorage: () => { clearTimeout(saveT); saveT = undefined; try { localStorage.removeItem(KEY); } catch { /* */ } },

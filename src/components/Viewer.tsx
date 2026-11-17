@@ -7,7 +7,10 @@ import { distanceToHouse, housePrims, obstaclePrims, surfaceHeight } from '../en
 import { useStore } from '../store';
 import { parseFecha, useSim } from '../sim/useSim';
 import { drawModule, drawModuleElec, pct, PX } from '../sim/viz';
-import { sunPosition, sunVector } from '../engine/engine';
+import { sunVector } from '../engine/engine';
+import { refDays, sunArc, sunHours } from '../sim/sunpath';
+
+const D2R = Math.PI / 180;
 
 const v3 = (a: number[]) => new THREE.Vector3(a[0], a[1], a[2]);
 export type CamKind = '3d' | 'top' | 'sun';
@@ -201,18 +204,65 @@ function Obstacles() {
 }
 
 // ---------- sol, cámara, escena ----------
+/** Centro y radio de la bóveda celeste dibujada alrededor del proyecto. */
+function useDome() {
+  const house = useStore(s => s.project.house);
+  const c: [number, number, number] = house.enabled ? [house.x, 0, -house.y] : [0, 0, 0];
+  const R = Math.min(35, Math.max(15, Math.max(house.ancho, house.fondo) * 1.5));
+  return { c, R };
+}
+type P3 = [number, number, number];
+const onDome = (c: P3, R: number, el: number, az: number): P3 => { const v = sunVector(el, az); return [c[0] + v[0] * R, c[1] + v[1] * R, c[2] + v[2] * R]; };
+
+/**
+ * Trayectoria solar: arco del día elegido (con horas), arcos de referencia de solsticios y equinoccio,
+ * y anillo del horizonte con los puntos cardinales. Cambia con la fecha y con la ubicación del sitio.
+ */
+function SunPath() {
+  const fecha = useStore(s => s.fecha), site = useStore(s => s.project.site), showLabels = useStore(s => s.showLabels);
+  const { c, R } = useDome();
+  const { y, m, d } = parseFecha(fecha);
+  const today = useMemo(() => sunArc(site, y, m, d).map(p => onDome(c, R, p.el, p.az)), [site, y, m, d, c[0], c[2], R]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hours = useMemo(() => sunHours(site, y, m, d), [site, y, m, d]);
+  const refs = useMemo(() => refDays(site.lat).map(r => {
+    const a = sunArc(site, y, r.m, r.d, 0.2);
+    const top = a.reduce((b, p) => (p.el > b.el ? p : b), a[0] ?? { h: 12, el: 0, az: 0 });
+    return { ...r, pts: a.map(p => onDome(c, R, p.el, p.az)), top: onDome(c, R * 1.04, top.el, top.az) };
+  }), [site, y, c[0], c[2], R]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ring = useMemo(() => Array.from({ length: 73 }, (_, i) => [c[0] + Math.sin(i * 5 * D2R) * R, 0.04, c[2] - Math.cos(i * 5 * D2R) * R] as P3), [c[0], c[2], R]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <group>
+      <Line points={ring} color="#082537" lineWidth={1} transparent opacity={0.45} />
+      {(['N', 'E', 'S', 'O'] as const).map((k, i) => (
+        <Html key={k} position={[c[0] + Math.sin(i * 90 * D2R) * R * 1.06, 0.2, c[2] - Math.cos(i * 90 * D2R) * R * 1.06]} center style={{ pointerEvents: 'none' }} zIndexRange={[5, 0]}>
+          <div className={'lab card' + (k === 'N' ? ' n' : '')}>{k}</div>
+        </Html>
+      ))}
+      {refs.map(r => r.pts.length > 1 && (
+        <group key={r.label}>
+          <Line points={r.pts} color={r.color} lineWidth={1.2} dashed dashSize={0.8} gapSize={0.5} transparent opacity={0.85} />
+          {showLabels && <Html position={r.top} center style={{ pointerEvents: 'none' }} zIndexRange={[5, 0]}><div className="lab ref" style={{ borderColor: r.color }}>{r.label}</div></Html>}
+        </group>
+      ))}
+      {today.length > 1 && <Line points={today} color="#FAB704" lineWidth={3} />}
+      {hours.map(p => {
+        const pos = onDome(c, R, p.el, p.az);
+        return (
+          <group key={p.h}>
+            <mesh position={pos}><sphereGeometry args={[0.22, 12, 8]} /><meshBasicMaterial color="#FAB704" /></mesh>
+            {showLabels && <Html position={onDome(c, R * 1.07, p.el, p.az)} center style={{ pointerEvents: 'none' }} zIndexRange={[6, 0]}><div className="lab hora">{p.h}h</div></Html>}
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 function Sun() {
   const { sun } = useSim();
-  const fecha = useStore(s => s.fecha), site = useStore(s => s.project.site);
+  const showSunPath = useStore(s => s.showSunPath);
+  const { c, R } = useDome();
   const light = useRef<THREE.DirectionalLight>(null!);
-  const path = useMemo(() => {
-    const { y, m, d } = parseFecha(fecha), pts: [number, number, number][] = [];
-    for (let h = 0; h <= 24; h += 0.1) {
-      const p = sunPosition(site.lat, site.lon, site.tz, y, m, d, h);
-      if (p.el > 0) pts.push(sunVector(p.el, p.az).map(c => c * 60) as [number, number, number]);
-    }
-    return pts;
-  }, [fecha, site]);
   const above = sun.el > 0, dir = v3(sun.vec);
   useEffect(() => { if (light.current) light.current.target.position.set(0, 0, 0); }, []);
   return (
@@ -220,8 +270,8 @@ function Sun() {
       <directionalLight ref={light} position={dir.clone().multiplyScalar(100)} intensity={above ? 0.6 + 2 * Math.sin(sun.el * Math.PI / 180) : 0}
         castShadow shadow-mapSize={[4096, 4096]} shadow-bias={-0.0004} shadow-normalBias={0.02}
         shadow-camera-left={-45} shadow-camera-right={45} shadow-camera-top={45} shadow-camera-bottom={-45} shadow-camera-far={400} />
-      {above && <mesh position={dir.clone().multiplyScalar(60)}><sphereGeometry args={[1.4, 24, 16]} /><meshBasicMaterial color="#FAB704" /></mesh>}
-      {path.length > 1 && <Line points={path} color="#FAB704" lineWidth={1.5} dashed dashSize={1} gapSize={0.6} />}
+      {above && <mesh position={onDome(c, R, sun.el, sun.az)}><sphereGeometry args={[0.9, 24, 16]} /><meshBasicMaterial color="#FAB704" /></mesh>}
+      {showSunPath && <SunPath />}
     </>
   );
 }
@@ -236,7 +286,7 @@ function CamRig() {
       const span = Math.max(house.ancho, house.fondo, 14), c = new THREE.Vector3(house.x, 2, -house.y);
       if (k === 'top') camera.position.set(c.x, span * 2.6, c.z + 0.001); // norte arriba
       else if (k === 'sun') { if (sun.el <= 0) return; camera.position.copy(v3(sun.vec).multiplyScalar(span * 2.4)).add(c); }
-      else camera.position.set(c.x - span * 0.9, span * 1.0, c.z - span * 1.5); // desde el norte (paneles mirando al norte)
+      else camera.position.set(c.x - span * 0.7, span * 2.5, c.z - span * 2.4); // desde el norte (paneles mirando al norte)
       controls.target.copy(c); controls.update();
     };
   }, [camera, controls, house, sun]);
@@ -255,7 +305,7 @@ function Compass() {
 }
 
 export default function Viewer() {
-  const set = useStore(s => s.set);
+  const set = useStore(s => s.set), showSunPath = useStore(s => s.showSunPath);
   return (
     <Canvas shadows camera={{ position: [-13, 14, -22], fov: 45, near: 0.1, far: 2000 }} onPointerMissed={() => set({ sel: null, selModule: -1 })}>
       <color attach="background" args={['#cfdbe3']} />
@@ -263,7 +313,7 @@ export default function Viewer() {
       <Sun />
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow><planeGeometry args={[400, 400]} /><meshStandardMaterial color="#d8d2c2" roughness={1} /></mesh>
       <gridHelper args={[200, 200, '#b8b2a2', '#c9c3b3']} position={[0, 0.005, 0]} />
-      <Compass />
+      {!showSunPath && <Compass />}
       <HouseMesh />
       <Fields />
       <Obstacles />

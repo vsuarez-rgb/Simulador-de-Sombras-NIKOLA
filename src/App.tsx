@@ -5,14 +5,20 @@ import Sidebar from './components/Sidebar';
 import { Seg } from './components/ui';
 import Viewer, { camBus } from './components/Viewer';
 import type { Project } from './engine/project';
-import { SimContext, useSim, useSimState } from './sim/useSim';
+import { daySummary, hhmm, MESES } from './sim/sunpath';
+import { parseFecha, SimContext, useSim, useSimState } from './sim/useSim';
 import { useStore } from './store';
 
 function SunInfo() {
   const { sun } = useSim();
-  return <div className="ov suninfo">{sun.el > 0
-    ? <><div>Elevación <b>{sun.el.toFixed(1)}°</b> · Azimut <b>{sun.az.toFixed(1)}°</b></div><div>DNI {sun.dni.toFixed(0)} · GHI {sun.ghi.toFixed(0)} W/m² (despejado)</div></>
-    : <div><b>Sol bajo el horizonte</b></div>}</div>;
+  const fecha = useStore(s => s.fecha), site = useStore(s => s.project.site);
+  const { y, m, d } = parseFecha(fecha), ds = daySummary(site, y, m, d);
+  return <div className="ov suninfo">
+    {sun.el > 0
+      ? <><div>Ahora: elevación <b>{sun.el.toFixed(1)}°</b> · azimut <b>{sun.az.toFixed(1)}°</b></div><div>DNI {sun.dni.toFixed(0)} · GHI {sun.ghi.toFixed(0)} W/m² (despejado)</div></>
+      : <div><b>Sol bajo el horizonte</b></div>}
+    {ds.sale !== null && <div className="day">{d} {MESES[m - 1].toLowerCase()}: sol {hhmm(ds.sale)}–{hhmm(ds.pone!)} ({ds.horas.toFixed(1)} h) · altura máx. <b>{ds.maxEl.toFixed(0)}°</b></div>}
+  </div>;
 }
 
 function TimeBar() {
@@ -24,8 +30,12 @@ function TimeBar() {
     return () => clearInterval(t);
   }, [play, set]);
   const hh = Math.floor(hora), mm = Math.round((hora - hh) * 60) % 60;
+  const { y, m } = parseFecha(fecha);
   return (
     <div className="ov timebar">
+      <div className="months" title="Ver la trayectoria del sol del día 21 de cada mes">
+        {MESES.map((n, i) => <button key={n} className={i + 1 === m ? 'on' : ''} onClick={() => set({ fecha: `${y}-${String(i + 1).padStart(2, '0')}-21`, day: null })}>{n}</button>)}
+      </div>
       <input type="date" value={fecha} onChange={e => e.target.value && set({ fecha: e.target.value, day: null })} />
       <button className="play" onClick={() => setPlay(p => !p)} title="Animar el día">{play ? '❚❚' : '▶'}</button>
       <input type="range" min={5} max={21} step={1 / 12} value={hora} onChange={e => set({ hora: +e.target.value })} />
@@ -52,7 +62,7 @@ function Legend() {
 }
 
 function ViewButtons() {
-  const showLabels = useStore(s => s.showLabels), showDims = useStore(s => s.showDims), set = useStore(s => s.set);
+  const showLabels = useStore(s => s.showLabels), showDims = useStore(s => s.showDims), showSunPath = useStore(s => s.showSunPath), set = useStore(s => s.set);
   const hideSide = useStore(s => s.hideSide), hideRes = useStore(s => s.hideRes), full = hideSide && hideRes;
   // Esc sale de la pantalla completa 3D (si el foco no está en un campo de texto)
   useEffect(() => {
@@ -70,6 +80,7 @@ function ViewButtons() {
       <button onClick={() => camBus.fn('sun')}>Desde el sol</button>
       <button className={showLabels ? 'on' : ''} onClick={() => set({ showLabels: !showLabels })}>Etiquetas</button>
       <button className={showDims ? 'on' : ''} onClick={() => set({ showDims: !showDims })}>Cotas</button>
+      <button className={showSunPath ? 'on' : ''} onClick={() => set({ showSunPath: !showSunPath })} title="Arcos del sol: día elegido, solsticios y equinoccio">Trayectoria solar</button>
       <span className="sep" />
       <button className={hideSide ? 'on' : ''} onClick={() => set({ hideSide: !hideSide })} title="Colapsa la barra lateral; el visor 3D ocupa su espacio">{hideSide ? 'Mostrar panel lateral' : 'Ocultar panel lateral'}</button>
       <button className={hideRes ? 'on' : ''} onClick={() => set({ hideRes: !hideRes })} title="Colapsa el panel de resultados">{hideRes ? 'Mostrar resultados' : 'Ocultar resultados'}</button>
