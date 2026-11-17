@@ -270,3 +270,9 @@ label.big select{font-size:13px;padding:7px 8px;font-family:var(--tit);font-weig
 .pempty b{font-family:var(--tit);text-transform:uppercase;letter-spacing:.04em;color:var(--am);font-size:14px}
 .pempty span{font-size:11px;color:var(--txt2);line-height:1.5}
 .viewbtns button.back{background:var(--am);color:var(--azul);border-color:var(--am)}
+/* paso 1: plano a la izquierda, vista previa 3D a la derecha */
+.v3d{position:absolute;inset:0}
+.view.split .v3d{left:58%}
+.view.split .planed{right:42%;border-right:2px solid var(--am)}
+.prev3d{position:absolute;top:10px;left:calc(58% + 10px);z-index:30;background:rgba(8,37,55,.85);color:#fff;font-family:var(--tit);font-size:10px;font-weight:600;padding:4px 10px;border-radius:12px;pointer-events:none}
+@media (max-width:1000px){.view.split .v3d{left:0;top:60%}.view.split .planed{right:0;bottom:40%;border-right:0;border-bottom:2px solid var(--am)}.prev3d{left:10px;top:calc(60% + 10px)}}

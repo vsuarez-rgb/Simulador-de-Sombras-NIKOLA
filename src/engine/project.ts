@@ -290,7 +290,40 @@ export function fieldOrientation(p: Project, f: Field) {
 
 export interface FieldInfo { id: string; superficie: string; tilt: number; azim: number; avisos: string[]; corners: V3[] }
 
+/** Zona de exclusión de un objeto: polígono en planta (X Este, Y Norte) y rango de alturas. */
+interface Keepout { poly: [number, number][]; y0: number; y1: number }
+function keepoutsOf(p: Project): Keepout[] {
+  const circle = (x: number, y: number, r: number): [number, number][] => Array.from({ length: 12 }, (_, i) => [x + r * Math.cos(i * Math.PI / 6), y + r * Math.sin(i * Math.PI / 6)]);
+  return p.obstacles.flatMap((o): Keepout[] => {
+    const y0 = obstacleBase(p, o), m = 0.1; // 10 cm de holgura alrededor del objeto
+    if (o.tipo === 'arbol') { const r = o.copa / 2, cy = y0 + o.alto - r; return [{ poly: circle(o.x, o.y, r + m), y0: cy - r, y1: cy + r }, { poly: circle(o.x, o.y, 0.15 + m), y0, y1: cy }]; }
+    if (o.tipo === 'poste') return [{ poly: circle(o.x, o.y, Math.max(0.05, o.ancho / 2) + m), y0, y1: y0 + o.alto }];
+    const r = o.rot * D2R, W = o.ancho / 2 + m, L = o.largo / 2 + m;
+    // misma rotación que boxPrim: eje local x = (cos r, sin r) en (x, z) → en planta (cos r, −sin r)
+    const ex: [number, number] = [Math.cos(r), -Math.sin(r)], ez: [number, number] = [-Math.sin(r), -Math.cos(r)];
+    return [{ poly: ([[-W, -L], [W, -L], [W, L], [-W, L]] as [number, number][]).map(([a, b]) => [o.x + a * ex[0] + b * ez[0], o.y + a * ex[1] + b * ez[1]]), y0, y1: y0 + o.alto }];
+  });
+}
+/** ¿El módulo (4 esquinas 3D) se cruza con la zona del objeto? Separación de ejes en planta + traslape en altura. */
+function moduleHits(mc: V3[], ko: Keepout): boolean {
+  const ys = mc.map(c => c[1]);
+  if (Math.max(...ys) < ko.y0 || Math.min(...ys) > ko.y1) return false;
+  const A = mc.map(c => [c[0], -c[2]] as [number, number]), B = ko.poly;
+  for (const poly of [A, B]) for (let i = 0; i < poly.length; i++) {
+    const p1 = poly[i], p2 = poly[(i + 1) % poly.length], ax = -(p2[1] - p1[1]), ay = p2[0] - p1[0];
+    const pa = A.map(q => q[0] * ax + q[1] * ay), pb = B.map(q => q[0] * ax + q[1] * ay);
+    if (Math.max(...pa) < Math.min(...pb) || Math.max(...pb) < Math.min(...pa)) return false;
+  }
+  return true;
+}
+
+/** Volumen cuyo techo está más alto en un punto de planta (para montar un campo donde se suelta). */
+export function volumeAt(p: Project, x: number, yN: number): Volume | undefined {
+  const t = topBlock(p.volumes, x, yN); return t ? p.volumes[t.i] : undefined;
+}
+
 export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] } {
+  const keepouts = keepoutsOf(p);
   const tables: Table[] = [], modules: Module[] = [], fieldInfo: FieldInfo[] = [];
   const { largo, ancho, gap } = p.modulo;
   p.fields.forEach((f, fi) => {
@@ -308,6 +341,7 @@ export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] }
     const depth = (f.filas - 1) * pitch + L * Math.cos(beta);
     const center: V3 = [f.x, 0, -f.y];
     const avisos: string[] = [], corners: V3[] = [];
+    let omitted = 0;
     let onRoof = 0, offRoof = 0;
     for (let i = 0; i < f.filas; i++) {
       const lc = add(center, mul(fdir, depth / 2 - i * pitch));
@@ -325,6 +359,9 @@ export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] }
         if (onIt(c[0], -c[2])) onRoof++; else offRoof++;
       }
       for (let k = 0; k < f.enAlto; k++) for (let c = 0; c < f.mods; c++) {
+        const a0 = c * (mw + gap), b0 = k * (ml + gap);
+        const mc = [[a0, b0], [a0 + mw, b0], [a0 + mw, b0 + ml], [a0, b0 + ml]].map(([a, b]) => add(add(P, mul(u, a)), mul(v, b)));
+        if (keepouts.some(ko => moduleHits(mc, ko))) { omitted++; continue; }
         modules.push({
           id: `${fi + 1}.${i + 1}${f.enAlto > 1 ? String.fromCharCode(97 + k) : ''}.${c + 1}`,
           key: `${f.id}|${i}|${k}|${c}`,
@@ -332,6 +369,7 @@ export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] }
         });
       }
     }
+    if (omitted) avisos.push(`${omitted} módulo(s) omitido(s): chocan con un objeto (chimenea, árbol, etc.)`);
     if (onRoof && offRoof) avisos.push('El campo sobresale del borde del techo');
     if (coplanar && o.superficie !== 'suelo' && onRoof) {
       // ¿cruza a otro faldón?
@@ -353,7 +391,7 @@ export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] }
   return { lay: { tables, modules, prims }, fieldInfo };
 }
 
-export function obstacleBase(p: Project, ob: Obstacle) { return surfaceHeight(p, ob.x, ob.y); }
+export function obstacleBase(p: Project, ob: Obstacle) { return ob.tipo === 'chimenea' ? surfaceHeight(p, ob.x, ob.y) : 0; }
 export function obstaclePrims(p: Project, ob: Obstacle): Prim[] {
   const x = ob.x, z = -ob.y, y0 = obstacleBase(p, ob);
   switch (ob.tipo) {

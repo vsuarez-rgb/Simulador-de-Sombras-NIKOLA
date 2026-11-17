@@ -89,8 +89,8 @@ function Mover({ target, x, y, rot, rotLabel = 'Giro' }: { target: Sel; x: numbe
 const STEP_INFO: Record<Tab,{ t: string; short: string; d: string }> = {
   casa: { t: 'Diseño de la casa', short: 'Casa', d: 'Arma la casa con volúmenes: el cuerpo principal, ampliaciones de otro alto, un quincho o una bodega separada.' },
   sitio: { t: 'Ubicación', short: 'Lugar', d: 'Elige la ciudad del proyecto. La trayectoria del sol (3D y diagrama) cambia con la ubicación y el mes.' },
-  paneles: { t: 'Paneles', short: 'Paneles', d: 'Agrega los campos de paneles y define cuántas filas y módulos tiene cada uno.' },
-  objetos: { t: 'Sombras del entorno', short: 'Sombras', d: 'Agrega lo que puede dar sombra: árboles, edificios vecinos, postes, muros o chimeneas. Este paso es opcional.' },
+  objetos: { t: 'Sombras del entorno', short: 'Sombras', d: 'Agrega lo que puede dar sombra (árboles, vecinos, postes, muros, chimeneas) y arrástralo en el 3D a su lugar. Es opcional.' },
+  paneles: { t: 'Paneles', short: 'Paneles', d: 'Agrega campos de paneles sobre los techos o el suelo y arrástralos en el 3D. Los módulos que chocan con un objeto se quitan solos.' },
   simular: { t: 'Simular', short: 'Simular', d: 'Calcula cuánto pierden los paneles por sombra en un día o en el año completo.' },
   electrico: { t: 'Eléctrico', short: 'Eléctrico', d: 'Ajusta inversor, strings y optimizadores, y compara cuánta energía se recupera.' },
 };
@@ -248,9 +248,13 @@ function Paneles() {
               onChange={rango => { const [a, b] = TILT_RANGES[rango]; setField(f.id, { rango, tilt: Math.min(b, Math.max(a, f.tilt)) }); }} /></>}
           <p className="note">X = metros hacia el Este, Y = metros hacia el Norte (0, 0 = centro de la casa por defecto).</p>
         </More>
-        <button className="btn sec sm" onClick={() => removeField(f.id)}>Eliminar campo</button>
+        <div className="addrow">
+          {f.vol && <button className="btn ter" onClick={() => mountField(f.id, f.vol!)} title="Vuelve a ubicar y dimensionar el campo para que llene el faldón que mira al norte">Ajustar al techo</button>}
+          <button className="btn sec sm" onClick={() => removeField(f.id)}>Eliminar campo</button>
+        </div>
       </div>}
       {!f && p.fields.length > 0 && <p className="note">Elige un campo de la lista (o haz clic en él en el 3D) para editarlo.</p>}
+      <p className="note tip"><span className="tipl">Consejo</span><b>Arrastra</b> un campo en el 3D para moverlo; si lo sueltas sobre otro techo queda montado en ese techo. Los módulos que caen sobre una chimenea u otro objeto se quitan solos.</p>
       <More label="Medidas del módulo">
         <Row cols={3}>
           <Num label="Largo" unit="m" value={p.modulo.largo} step={0.001} min={0.5} onChange={largo => setModulo({ largo })} />
@@ -302,7 +306,7 @@ function Objetos() {
             <Num label={o.tipo === 'muro' ? 'Espesor' : 'Fondo'} unit="m" value={o.largo} min={0.05} onChange={largo => setObs(o.id, { largo })} />
           </Row>
         </More>}
-        <p className="note">La línea punteada en el 3D marca la distancia libre a la casa.</p>
+        <p className="note"><b>Arrastra</b> el objeto en el 3D o usa las flechas. La línea punteada marca la distancia libre a la casa.</p>
         <button className="btn sec sm" onClick={() => removeObs(o.id)}>Eliminar objeto</button>
       </div>}
       <p className="note tip"><span className="tipl">Consejo</span>Abajo, en el <b>diagrama solar</b>, la zona gris es lo que tapa el sol: si la curva de un mes pasa por ahí, hay sombra en ese mes y hora.</p>

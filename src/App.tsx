@@ -94,8 +94,8 @@ function ViewButtons() {
 const PASOS: [string, string][] = [
   ['Casa', 'Arma la casa con volúmenes: dos pisos, ampliaciones, quincho…'],
   ['Lugar', 'Elige la ciudad: el recorrido del sol depende de dónde estás.'],
-  ['Paneles', 'Cuántas filas y módulos, y cómo van montados.'],
-  ['Sombras', 'Árboles, edificios y postes que pueden tapar el sol.'],
+  ['Sombras', 'Árboles, vecinos, postes y chimeneas que pueden tapar el sol.'],
+  ['Paneles', 'Campos de paneles sobre los techos o el suelo, arrastrables.'],
   ['Simular', 'Calcula la pérdida de energía por sombra en el año.'],
   ['Eléctrico', 'Strings y optimizadores para recuperar energía.'],
 ];
@@ -167,9 +167,11 @@ export default function App() {
       <div className={'app' + (hideSide ? ' noside' : '')}>
         <Sidebar />
         <main className={hideRes || tab === 'casa' ? 'nores' : ''}>
-          <div className="view">
-            <Viewer />
-            {plano ? <PlanEditor /> : <><ViewButtons /><SunInfo /><TimeBar /><Legend /></>}
+          <div className={'view' + (plano ? ' split' : '')}>
+            <div className="v3d"><Viewer /></div>
+            {plano
+              ? <><PlanEditor /><div className="prev3d">Vista previa 3D · gira con el mouse</div></>
+              : <><ViewButtons /><SunInfo /><TimeBar /><Legend /></>}
           </div>
           <Results />
         </main>

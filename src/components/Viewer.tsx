@@ -1,15 +1,84 @@
 import { Html, Line, OrbitControls } from '@react-three/drei';
 import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { Box, Module, Prim, Table } from '../engine/engine';
 import { distanceToHouse, obstaclePrims, surfaceHeight, volumePrims, type Volume } from '../engine/project';
 import { DESIGN_STEPS, useStore, type Sel, type Tab } from '../store';
 
-/** Selecciona un objeto; solo salta a su paso si se está diseñando (en Simular/Eléctrico se queda ahí). */
+/**
+ * Selecciona solo lo que pertenece al paso actual: tocar la casa en Lugar, Sombras o Paneles no la
+ * selecciona ni salta de paso. En Simular/Eléctrico un clic en un módulo solo marca ese módulo.
+ */
 function pick(sel: Sel, tab: Tab, extra: { selModule?: number } = {}) {
   const st = useStore.getState();
-  st.set(DESIGN_STEPS.includes(st.tab) ? { sel, tab, ...extra } : { sel, ...extra });
+  if (st.tab === tab) st.set({ sel, ...extra });
+  else if (extra.selModule !== undefined && !DESIGN_STEPS.includes(st.tab)) st.set(extra);
+}
+
+// ---------- arrastre (campos en Paneles, objetos en Sombras) ----------
+type DragTarget = { kind: 'field'; id: string } | { kind: 'obs'; id: string };
+const TAB_OF = { field: 'paneles', obs: 'objetos' } as const;
+const snap5 = (v: number) => Math.round(v * 20) / 20; // 0,05 m
+
+/**
+ * Arrastre con mouse o dedo: el puntero se proyecta sobre un plano horizontal a la altura del punto
+ * tomado y se mueve el objeto en planta (snap 0,05 m). Solo funciona en el paso del objeto; bajo 4 px
+ * de movimiento es un clic. Al soltar un campo, se monta sobre el techo que quedó debajo.
+ */
+function useDrag() {
+  const camera = useThree(s => s.camera), gl = useThree(s => s.gl);
+  const controls = useThree(s => s.controls) as unknown as { enabled: boolean } | null;
+  const start = useCallback((t: DragTarget) => (e: ThreeEvent<PointerEvent>) => {
+    const st = useStore.getState();
+    if (st.tab !== TAB_OF[t.kind] || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const o = t.kind === 'field' ? st.project.fields.find(x => x.id === t.id) : st.project.obstacles.find(x => x.id === t.id);
+    if (!o) return;
+    e.stopPropagation();
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -e.point.y);
+    const rc = new THREE.Raycaster(), ndc = new THREE.Vector2(), hit = new THREE.Vector3();
+    const toPlane = (cx: number, cy: number): [number, number] | null => {
+      const r = gl.domElement.getBoundingClientRect();
+      ndc.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+      rc.setFromCamera(ndc, camera);
+      return rc.ray.intersectPlane(plane, hit) ? [hit.x, -hit.z] : null;
+    };
+    const h0 = toPlane(e.clientX, e.clientY); if (!h0) return;
+    const off = [o.x - h0[0], o.y - h0[1]], id = e.pointerId, sx = e.clientX, sy = e.clientY;
+    let dragging = false, raf = 0, pending: [number, number] | null = null;
+    if (controls) controls.enabled = false;
+    const apply = () => {
+      raf = 0; if (!pending) return;
+      const s2 = useStore.getState();
+      if (t.kind === 'field') s2.setField(t.id, { x: pending[0], y: pending[1] }); else s2.setObs(t.id, { x: pending[0], y: pending[1] });
+      pending = null;
+    };
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      if (!dragging) {
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
+        dragging = true; useStore.getState().set({ sel: t }); gl.domElement.style.cursor = 'grabbing';
+      }
+      const p = toPlane(ev.clientX, ev.clientY); if (!p) return;
+      pending = [snap5(p[0] + off[0]), snap5(p[1] + off[1])];
+      if (!raf) raf = requestAnimationFrame(apply);
+    };
+    const end = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end);
+      if (raf) { cancelAnimationFrame(raf); apply(); }
+      if (controls) controls.enabled = true;
+      gl.domElement.style.cursor = '';
+      if (dragging && t.kind === 'field') useStore.getState().dropField(t.id);
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+  }, [camera, gl, controls]);
+  // cursor "mano" sobre lo que se puede arrastrar en el paso actual
+  const hover = useCallback((kind: DragTarget['kind']) => ({
+    onPointerOver: (e: ThreeEvent<PointerEvent>) => { if (useStore.getState().tab === TAB_OF[kind]) { e.stopPropagation(); gl.domElement.style.cursor = 'grab'; } },
+    onPointerOut: () => { if (gl.domElement.style.cursor === 'grab') gl.domElement.style.cursor = ''; },
+  }), [gl]);
+  return { start, hover };
 }
 import { parseFecha, useSim } from '../sim/useSim';
 import { drawModule, drawModuleElec, pct, PX } from '../sim/viz';
@@ -47,19 +116,20 @@ const SEL_EMISSIVE = new THREE.Color('#FAB704');
 
 type ClickFn = (e: ThreeEvent<MouseEvent>) => void;
 
-function PrimMesh({ p, selected, onClick }: { p: Prim; selected?: boolean; onClick?: ClickFn }) {
+type MeshEv = { onPointerDown?: (e: ThreeEvent<PointerEvent>) => void; onPointerOver?: (e: ThreeEvent<PointerEvent>) => void; onPointerOut?: () => void };
+function PrimMesh({ p, selected, onClick, ev }: { p: Prim; selected?: boolean; onClick?: ClickFn; ev?: MeshEv }) {
   const mat = useMemo(() => {
     const base = (MAT as Record<string, THREE.MeshStandardMaterial>)[p.kind] ?? MAT.edificio;
     if (!selected) return base;
     const m = base.clone(); m.emissive = SEL_EMISSIVE; m.emissiveIntensity = 0.25; return m;
   }, [p.kind, selected]);
   if (p.type === 'box') return (
-    <mesh position={p.c} rotation={[0, -(p as Box).rot * Math.PI / 180, 0]} castShadow receiveShadow material={mat} onClick={onClick}>
+    <mesh position={p.c} rotation={[0, -(p as Box).rot * Math.PI / 180, 0]} castShadow receiveShadow material={mat} onClick={onClick} {...ev}>
       <boxGeometry args={[p.h[0] * 2, p.h[1] * 2, p.h[2] * 2]} />
     </mesh>);
-  if (p.type === 'sph') return <mesh position={p.c} castShadow receiveShadow material={mat} onClick={onClick}><sphereGeometry args={[p.r, 24, 16]} /></mesh>;
+  if (p.type === 'sph') return <mesh position={p.c} castShadow receiveShadow material={mat} onClick={onClick} {...ev}><sphereGeometry args={[p.r, 24, 16]} /></mesh>;
   if (p.type === 'cyl') return (
-    <mesh position={[p.c[0], (p.y0 + p.y1) / 2, p.c[1]]} castShadow material={mat} onClick={onClick}>
+    <mesh position={[p.c[0], (p.y0 + p.y1) / 2, p.c[1]]} castShadow material={mat} onClick={onClick} {...ev}>
       <cylinderGeometry args={[p.r, p.r, p.y1 - p.y0, 14]} />
     </mesh>);
   return null;
@@ -80,7 +150,7 @@ function TriMesh({ tris, material, onClick }: { tris: Prim[]; material: THREE.Ma
 
 // ---------- volúmenes (casa, ampliaciones, quincho…) ----------
 function VolumeMesh({ v, others }: { v: Volume; others: Volume[] }) {
-  const selected = useStore(s => s.sel?.kind === 'vol' && s.sel.id === v.id);
+  const selected = useStore(s => s.tab === 'casa' && s.sel?.kind === 'vol' && s.sel.id === v.id);
   const prims = useMemo(() => volumePrims(v, others), [v, others]);
   const click = (e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); pick({ kind: 'vol', id: v.id }, 'casa'); };
   const roofMat = useMemo(() => {
@@ -124,7 +194,7 @@ function ModuleMesh({ m, t, idx }: { m: Module; t: Table; idx: number }) {
   const sIdx = rs.stringOf[idx], isOpt = rs.optimized.includes(idx), isEx = rs.excluded.includes(idx);
   const mode = useStore(s => s.mode), day = useStore(s => s.day), yearRes = useStore(s => s.yearRes);
   const selModule = useStore(s => s.selModule), set = useStore(s => s.set), showLabels = useStore(s => s.showLabels), fields = useStore(s => s.project.fields);
-  const fieldId = fields[m.field]?.id;
+  const fieldId = fields[m.field]?.id, drag = useDrag();
   const { cv, tex, geo, center } = useMemo(() => {
     const cv = document.createElement('canvas'); cv.width = m.nu * PX; cv.height = m.nv * PX;
     const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
@@ -154,7 +224,7 @@ function ModuleMesh({ m, t, idx }: { m: Module; t: Table; idx: number }) {
         e.stopPropagation();
         if (elecView) { clickElec(m.key); set({ selModule: idx }); return; }
         pick({ kind: 'field', id: fieldId }, 'paneles', { selModule: idx });
-      }}>
+      }} {...(fieldId && !elecView ? { onPointerDown: drag.start({ kind: 'field', id: fieldId }), ...drag.hover('field') } : {})}>
         {flat
           ? <meshBasicMaterial key="flat" map={tex} toneMapped={false} side={THREE.DoubleSide} />
           : <meshStandardMaterial key="lit" map={tex} roughness={0.35} metalness={0.1} side={THREE.DoubleSide} />}
@@ -171,6 +241,7 @@ function ModuleMesh({ m, t, idx }: { m: Module; t: Table; idx: number }) {
 function Fields() {
   const { lay } = useSim();
   const sel = useStore(s => s.sel), fields = useStore(s => s.project.fields), project = useStore(s => s.project);
+  const drag = useDrag();
   return (
     <group>
       {lay.tables.map(t => {
@@ -190,7 +261,8 @@ function Fields() {
         }
         return (
           <group key={t.id}>
-            <mesh position={c} quaternion={q} castShadow receiveShadow onClick={e => { e.stopPropagation(); pick({ kind: 'field', id: f.id }, 'paneles'); }}>
+            <mesh position={c} quaternion={q} castShadow receiveShadow onClick={e => { e.stopPropagation(); pick({ kind: 'field', id: f.id }, 'paneles'); }}
+              {...(f ? { onPointerDown: drag.start({ kind: 'field', id: f.id }), ...drag.hover('field') } : {})}>
               <boxGeometry args={[t.W + 0.04, 0.05, t.L + 0.04]} />
               <meshStandardMaterial color={selected ? '#FAB704' : '#9aa4ab'} metalness={0.4} roughness={0.6} />
             </mesh>
@@ -206,6 +278,7 @@ function Fields() {
 // ---------- objetos ----------
 function Obstacles() {
   const project = useStore(s => s.project), sel = useStore(s => s.sel), showDims = useStore(s => s.showDims);
+  const drag = useDrag();
   return (
     <group>
       {project.obstacles.map(ob => {
@@ -214,7 +287,7 @@ function Obstacles() {
         const dist = showDims || selected ? distanceToHouse(project, ob) : null;
         return (
           <group key={ob.id}>
-            {obstaclePrims(project, ob).map((p, i) => <PrimMesh key={i} p={p} selected={selected} onClick={click} />)}
+            {obstaclePrims(project, ob).map((p, i) => <PrimMesh key={i} p={p} selected={selected} onClick={click} ev={{ onPointerDown: drag.start({ kind: 'obs', id: ob.id }), ...drag.hover('obs') }} />)}
             {dist && !dist.inside && (
               <>
                 <Line points={[[dist.a[0], 0.06, -dist.a[1]], [dist.b[0], 0.06, -dist.b[1]]]} color={selected ? '#FAB704' : '#082537'} lineWidth={selected ? 2.5 : 1.5} dashed dashSize={0.3} gapSize={0.2} />
@@ -320,6 +393,9 @@ function CamRig() {
   }, [camera, controls, vs, sun]);
   const first = useRef(true);
   useEffect(() => { if (controls && first.current) { first.current = false; camBus.fn('3d'); } }, [controls]);
+  // se reencuadra solo cuando se agrega o quita un volumen (editar medidas o techo no mueve la cámara)
+  const nVol = vs.length, prevN = useRef(nVol);
+  useEffect(() => { if (controls && nVol !== prevN.current) { prevN.current = nVol; camBus.fn('3d'); } }, [controls, nVol]);
   return null;
 }
 

@@ -1,12 +1,12 @@
 import { create } from 'zustand';
-import { defaultProject, exampleProject, insideBlock, migrate, roofSpot, toWorld, uid, VOL_TEMPLATES, type ElecConfig, type ElecTool, type Field, type ModuleSpec, type Obstacle, type ObsType, type Project, type Site, type Volume, type VolTipo, type Weather } from './engine/project';
+import { defaultProject, exampleProject, insideBlock, volumeAt, migrate, roofSpot, toWorld, uid, VOL_TEMPLATES, type ElecConfig, type ElecTool, type Field, type ModuleSpec, type Obstacle, type ObsType, type Project, type Site, type Volume, type VolTipo, type Weather } from './engine/project';
 import type { DayResult, YearResult } from './engine/sim';
 
 export type Sel = { kind: 'vol'; id: string } | { kind: 'field'; id: string } | { kind: 'obs'; id: string } | null;
 export type Mode = 'instante' | 'dia' | 'anio';
 export type Tab = 'sitio' | 'casa' | 'paneles' | 'objetos' | 'simular' | 'electrico';
 /** Pasos del asistente, en orden: primero se diseña la casa. Los cuatro primeros son de diseño (sin resultados en pantalla). */
-export const STEPS: Tab[] = ['casa', 'sitio', 'paneles', 'objetos', 'simular', 'electrico'];
+export const STEPS: Tab[] = ['casa', 'sitio', 'objetos', 'paneles', 'simular', 'electrico'];
 export const DESIGN_STEPS: Tab[] = STEPS.slice(0, 4);
 export type Clima = 'despejado' | 'archivo' | 'pvgis';
 export type ColorBy = 'celda' | 'panel';
@@ -59,6 +59,8 @@ interface State {
   removeField: (id: string) => void;
   setObs: (id: string, o: Partial<Obstacle>) => void;
   addObs: (t: ObsType) => void;
+  /** Al soltar un campo arrastrado: se monta sobre el techo que quedó bajo su centro (o pasa al suelo). */
+  dropField: (id: string) => void;
   removeObs: (id: string) => void;
   /** Tamaño del paso de los botones mover/girar: 0 fino, 1 normal, 2 grande. */
   nudge: 0 | 1 | 2;
@@ -209,9 +211,31 @@ export const useStore = create<State>((set, get) => {
     removeField: id => { touch({ ...get().project, fields: get().project.fields.filter(x => x.id !== id) }); set({ sel: null, selModule: -1 }); },
     setObs: (id, o) => touch({ ...get().project, obstacles: get().project.obstacles.map(x => (x.id === id ? { ...x, ...o } : x)) }),
     addObs: t => {
-      const p = get().project, o: Obstacle = { ...OBS_NEW[t], id: uid() }, v = p.volumes[0];
-      if (t === 'chimenea' && v) { const w = toWorld(v, v.ancho / 4, 0, v.fondo / 4); o.x = r2(w[0]); o.y = r2(-w[2]); }
+      const p = get().project, o: Obstacle = { ...OBS_NEW[t], id: uid() };
+      // aparece alrededor de la casa (nunca encima), separado de los que ya hay del mismo tipo
+      const cs = p.volumes.flatMap(v => [toWorld(v, -v.ancho / 2, 0, -v.fondo / 2), toWorld(v, v.ancho / 2, 0, v.fondo / 2), toWorld(v, -v.ancho / 2, 0, v.fondo / 2), toWorld(v, v.ancho / 2, 0, -v.fondo / 2)].map(w => [w[0], -w[2]]));
+      const x0 = cs.length ? Math.min(...cs.map(c => c[0])) : -5, x1 = cs.length ? Math.max(...cs.map(c => c[0])) : 5;
+      const y0 = cs.length ? Math.min(...cs.map(c => c[1])) : -4, y1 = cs.length ? Math.max(...cs.map(c => c[1])) : 4;
+      const k = p.obstacles.filter(x => x.tipo === t).length * 3, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      const at: Record<ObsType, [number, number]> = {
+        arbol: [x0 - 3 - o.copa / 2 + k, y1 + 3 + o.copa / 2],     // al noroeste: el sol en Chile viene del norte
+        poste: [x1 + 3 + k, y1 + 4],
+        edificio: [x1 + 4 + o.ancho / 2 + k, cy],                   // vecino al oriente
+        muro: [cx + k, y0 - 3],                                     // deslinde al sur
+        chimenea: [0, 0],
+      };
+      [o.x, o.y] = at[t].map(r2) as [number, number];
+      if (t === 'chimenea') {
+        const v = (get().sel?.kind === 'vol' && p.volumes.find(x => x.id === (get().sel as { id: string }).id)) || biggest(p.volumes);
+        if (v) { const w = toWorld(v, v.ancho / 4 - k / 3, 0, v.fondo / 4); o.x = r2(w[0]); o.y = r2(-w[2]); } else { o.x = 0; o.y = 0; }
+      }
       touch({ ...p, obstacles: [...p.obstacles, o] }); set({ sel: { kind: 'obs', id: o.id }, tab: 'objetos' });
+    },
+    dropField: id => {
+      const p = get().project, f = p.fields.find(x => x.id === id); if (!f) return;
+      const v = volumeAt(p, f.x, f.y);
+      if (v && v.id !== f.vol) touch({ ...p, fields: p.fields.map(x => (x.id === id ? { ...x, vol: v.id, montaje: v.techo === 'plano' ? 'inclinada' : x.montaje } : x)) });
+      else if (!v && f.vol) touch({ ...p, fields: p.fields.map(x => (x.id === id ? { ...x, vol: undefined, montaje: 'inclinada', altura: 0.6, tilt: Math.max(x.tilt, 15) } : x)) });
     },
     removeObs: id => { touch({ ...get().project, obstacles: get().project.obstacles.filter(x => x.id !== id) }); set({ sel: null }); },
     nudge: 1,

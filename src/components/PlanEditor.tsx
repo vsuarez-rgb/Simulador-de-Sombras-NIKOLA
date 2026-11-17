@@ -61,8 +61,8 @@ export default function PlanEditor() {
       const s = toS(c); if (Math.hypot(s[0] - sx, s[1] - sy) < 10) return { p: c, corner: true };
     }
     if (pts.length === 1) {
-      // largo libre (0,05 m) y dirección con imán cada 15°
-      const d = sub(w, pts[0]), L = Math.round(len(d) * 20) / 20; let az = Math.atan2(d[0], d[1]) / D2R;
+      // largo redondeado a 0,1 m y dirección con imán cada 15°
+      const d = sub(w, pts[0]), L = Math.round(len(d) * 10) / 10; let az = Math.atan2(d[0], d[1]) / D2R;
       const near = Math.round(az / 15) * 15; if (Math.abs(near - az) < 4) az = near;
       return { p: [pts[0][0] + Math.sin(az * D2R) * L, pts[0][1] + Math.cos(az * D2R) * L], corner: false };
     }
@@ -74,7 +74,7 @@ export default function PlanEditor() {
     const ab = sub(B, A), L = len(ab); if (L < 0.3) return null;
     const u: P = [ab[0] / L, ab[1] / L], n: P = [u[1], -u[0]];
     let d = (C[0] - A[0]) * n[0] + (C[1] - A[1]) * n[1];
-    d = Math.round(d * 20) / 20; if (Math.abs(d) < 0.3) return null;
+    d = Math.round(d * 10) / 10; if (Math.abs(d) < 0.3) return null;
     const dir: P = [n[0] * Math.sign(d), n[1] * Math.sign(d)], D = Math.abs(d);
     const mid: P = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2], c: P = [mid[0] + dir[0] * D / 2, mid[1] + dir[1] * D / 2];
     const rot = ((Math.atan2(-dir[0], -dir[1]) / D2R) % 360 + 360) % 360; // el frente mira al lado contrario del fondo
@@ -206,7 +206,7 @@ export default function PlanEditor() {
         <button onClick={fit} title="Encuadrar todo">Encuadrar</button>
         <button onClick={() => zoom(1 / 1.25)} title="Alejar">−</button>
         <button onClick={() => zoom(1.25)} title="Acercar">+</button>
-        <button className="pri" onClick={() => set({ casaView: '3d' })} title="Ver la casa en 3D">Ver en 3D</button>
+        <button className="pri" onClick={() => set({ casaView: '3d' })} title="Ver solo el 3D, en grande">Ampliar 3D</button>
       </div>
       <div className="phint">{hint}</div>
       {!vs.length && tool === 'draw' && pts.length === 0 && <div className="pempty">
