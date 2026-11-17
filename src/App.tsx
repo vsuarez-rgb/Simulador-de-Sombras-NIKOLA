@@ -87,7 +87,7 @@ function Header() {
       <button className="btn sec sm" onClick={() => file.current?.click()}>Abrir</button>
       <button className="btn sec sm" onClick={() => download(`${safe}.sombras.json`, JSON.stringify(project, null, 2), 'application/json')}>Guardar</button>
       <button className="btn sec sm" onClick={() => download(`${safe}-${mode}.csv`, rowsToCsv(mode, rows), 'text/csv')}>Exportar CSV</button>
-      <button className="btn pri sm" onClick={() => { if (confirm('¿Crear un proyecto nuevo? Se perderán los cambios no guardados.')) { localStorage.removeItem('nikola-sombras-v2'); location.reload(); } }}>Nuevo</button>
+      <button className="btn pri sm" onClick={() => { if (confirm('¿Crear un proyecto nuevo? Se perderán los cambios no guardados.')) { useStore.getState().resetStorage(); location.reload(); } }}>Nuevo</button>
       <input ref={file} type="file" accept=".json" hidden onChange={async e => {
         const f = e.target.files?.[0]; if (!f) return;
         try { const p = JSON.parse(await f.text()) as Project; if (p.version !== 2) throw new Error(); setProject(p); flash('Proyecto cargado'); }

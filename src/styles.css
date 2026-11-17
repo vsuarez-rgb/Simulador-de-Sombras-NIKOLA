@@ -76,6 +76,7 @@ main.nores>.res{display:none}
 .lab{font-family:var(--tit);font-size:10px;font-weight:600;color:#fff;background:rgba(8,37,55,.8);padding:1px 5px;border-radius:4px;white-space:nowrap;user-select:none}
 .lab.hi{background:var(--am);color:var(--azul)}
 .dim{font-family:var(--tit);font-size:11px;font-weight:700;color:var(--azul);background:#fff;border:1px solid var(--azul);padding:1px 6px;border-radius:10px;white-space:nowrap;user-select:none}
+.dragtip{font-family:var(--tit);font-size:10px;font-weight:600;color:var(--azul);background:var(--am);padding:3px 7px;border-radius:6px;white-space:nowrap;user-select:none;text-align:center;line-height:1.35;box-shadow:0 1px 4px rgba(8,37,55,.35)}
 .dim.hi{background:var(--am);border-color:var(--am)}
 .res{background:var(--azul);border-top:1px solid var(--linea);display:grid;grid-template-columns:minmax(380px,1.15fr) 1fr;min-height:0}
 .res .col{padding:7px 12px;overflow:auto;min-height:0}

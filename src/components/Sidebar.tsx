@@ -167,7 +167,7 @@ function Casa() {
           {h.techo !== 'plano' && <Num label="Alero" unit="m" value={h.alero} min={0} max={2} onChange={alero => setHouse({ alero })} />}
           {h.techo === 'plano' && <Num label="Parapeto" unit="m" value={h.parapeto} min={0} onChange={parapeto => setHouse({ parapeto })} />}
         </Row>
-        <p className="note">Altura de aleros {eaveHeight(h).toFixed(1)} m. El azimut del frente define hacia dónde cae el faldón frontal (0° = Norte). Arrastra la casa con las flechas al seleccionarla.</p>
+        <p className="note">Altura de aleros {eaveHeight(h).toFixed(1)} m. El azimut del frente define hacia dónde cae el faldón frontal (0° = Norte). Arrastra la casa directamente en 3D (mouse o dedo); gírala con el anillo o con R / Shift+R (±15°).</p>
       </>}
     </>
   );
@@ -225,7 +225,7 @@ function Paneles() {
         {info.avisos.map(a => <div key={a} className="warn">⚠ {a}</div>)}
         <button className="btn sec sm" onClick={() => removeField(f.id)}>Eliminar campo</button>
       </div>}
-      {!f && <p className="note">Selecciona un campo en la lista o haz clic en él en 3D para editarlo y moverlo con las flechas.</p>}
+      {!f && <p className="note">Selecciona un campo en la lista o haz clic en él en 3D para editarlo; arrástralo en 3D para moverlo (en base inclinable, gíralo con el anillo o R / Shift+R).</p>}
     </>
   );
 }
@@ -263,7 +263,7 @@ function Objetos() {
             <Num label="Rotación" unit="°" value={o.rot} step={1} onChange={rot => setObs(o.id, { rot })} />
           </>}
         </Row>
-        <p className="note">Arrastra el objeto con las flechas en 3D. La cota punteada muestra la distancia libre hasta el muro de la casa más cercano.</p>
+        <p className="note">Arrastra el objeto directamente en 3D (edificios y muros se giran con el anillo o R / Shift+R). La cota punteada muestra la distancia libre hasta el muro de la casa más cercano.</p>
         <button className="btn sec sm" onClick={() => removeObs(o.id)}>Eliminar objeto</button>
       </div>}
     </>

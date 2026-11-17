@@ -20,8 +20,11 @@ interface State {
   fecha: string; hora: number; sub: number; clima: Clima; tool: ElecTool; activeString: string | null;
   showLabels: boolean; showDims: boolean; selModule: number;
   hideSide: boolean; hideRes: boolean;
+  /** Objeto que se está arrastrando en el visor (para cotas y tooltip en vivo). */
+  dragging: Sel;
   day: DayResult | null; yearRes: YearResult | null; busy: number | null; error: string | null;
   pvgisCache: { key: string; w: Weather } | null;
+  resetStorage: () => void;
   setProject: (p: Project) => void;
   setSite: (s: Partial<Site>) => void;
   setModulo: (m: Partial<ModuleSpec>) => void;
@@ -47,8 +50,13 @@ const OBS_NEW: Record<ObsType, Omit<Obstacle, 'id'>> = {
 };
 
 export const useStore = create<State>((set, get) => {
+  // Guardado diferido: al arrastrar objetos el proyecto cambia en cada frame y serializarlo
+  // (con el archivo de clima incluido) cada vez trabaría la interfaz.
+  let saveT: ReturnType<typeof setTimeout> | undefined;
+  const save = () => { clearTimeout(saveT); saveT = undefined; try { localStorage.setItem(KEY, JSON.stringify(get().project)); } catch { /* */ } };
+  if (typeof window !== 'undefined') window.addEventListener('beforeunload', () => { if (saveT) save(); });
   const touch = (project: Project) => {
-    try { localStorage.setItem(KEY, JSON.stringify(project)); } catch { /* */ }
+    clearTimeout(saveT); saveT = setTimeout(save, 400);
     set({ project, day: null, yearRes: null });
   };
   return {
@@ -56,8 +64,9 @@ export const useStore = create<State>((set, get) => {
     sel: null, tab: 'casa', mode: 'instante',
     fecha: `${year}-06-21`, hora: 15, sub: 2, clima: 'despejado', tool: 'string', activeString: null,
     showLabels: true, showDims: true, selModule: -1,
-    hideSide: false, hideRes: false,
+    hideSide: false, hideRes: false, dragging: null,
     day: null, yearRes: null, busy: null, error: null, pvgisCache: null,
+    resetStorage: () => { clearTimeout(saveT); saveT = undefined; try { localStorage.removeItem(KEY); } catch { /* */ } },
     setProject: p => { touch(migrate(p)); set({ sel: null, selModule: -1 }); },
     setSite: s => touch({ ...get().project, site: { ...get().project.site, ...s } }),
     setModulo: m => touch({ ...get().project, modulo: { ...get().project.modulo, ...m } }),
