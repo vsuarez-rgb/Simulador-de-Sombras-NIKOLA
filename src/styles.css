@@ -176,3 +176,26 @@ label.big select{font-size:13px;padding:7px 8px;font-family:var(--tit);font-weig
 .eff b.xl{font-size:24px}
 .note.tip{margin-top:12px;background:rgba(250,183,4,.07);border-radius:6px;padding:6px 8px}
 .res.solo{grid-template-columns:minmax(0,1fr)}
+/* mover / girar con botones */
+.mover{display:flex;gap:10px;align-items:center;background:var(--azul);border:1px solid var(--linea);border-radius:10px;padding:8px;margin:4px 0 8px}
+.mover .pad{display:grid;grid-template-columns:repeat(3,30px);grid-template-rows:repeat(3,30px);gap:3px;flex:none}
+.mover .arr{background:var(--azulb);border:1px solid var(--linea);border-radius:7px;color:#fff;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:1px;padding:0;user-select:none;touch-action:manipulation;flex-direction:column;line-height:1}
+.mover .arr i{font-style:normal;font-family:var(--tit);font-weight:700;font-size:8.5px;color:var(--am)}
+.mover .arr:nth-child(4),.mover .arr:nth-child(6){flex-direction:row;gap:2px}
+.mover .arr:hover{border-color:var(--am)}
+.mover .arr:active{background:var(--am);color:var(--azul)}
+.mover .arr:active i{color:var(--azul)}
+.mover .mid{display:flex;align-items:center;justify-content:center;font-size:9px;color:#9fb0bd;text-align:center}
+.mover .mid b{font-family:var(--tit);color:var(--am2);font-weight:600}
+.mover .side{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;font-size:10px;color:#c9d4dc}
+.mover .where span,.mover .rot>span{display:block;color:#9fb0bd;font-size:9px}
+.mover .where{line-height:1.35}
+.mover .rot b{color:var(--am);font-family:var(--tit)}
+.mover .rot>div{display:flex;gap:4px;margin-top:3px}
+.mover .rot button{flex:1;background:var(--azulb);border:1px solid var(--linea);border-radius:7px;color:#fff;padding:4px 0;font-family:var(--tit);font-size:10px;font-weight:600;cursor:pointer;user-select:none;touch-action:manipulation}
+.mover .rot button:hover{border-color:var(--am)}
+.mover .rot button:active{background:var(--am);color:var(--azul)}
+.mover .steps{display:flex;gap:2px}
+.mover .steps button{flex:1;background:none;border:1px solid var(--linea);border-radius:10px;color:#9fb0bd;font-size:8.5px;font-family:var(--tit);font-weight:600;padding:2px 0;cursor:pointer}
+.mover .steps button.on{background:var(--am);border-color:var(--am);color:var(--azul)}
+.quick span{font-size:10px;color:#9fb0bd;align-self:center;margin-right:2px;white-space:nowrap}

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { defaultProject, migrate, uid, type ElecConfig, type ElecTool, type Field, type House, type ModuleSpec, type Obstacle, type ObsType, type Project, type Site, type Weather } from './engine/project';
+import { defaultProject, distanceToHouse, migrate, uid, type ElecConfig, type ElecTool, type Field, type House, type ModuleSpec, type Obstacle, type ObsType, type Project, type Site, type Weather } from './engine/project';
 import type { DayResult, YearResult } from './engine/sim';
 
 export type Sel = { kind: 'house' } | { kind: 'field'; id: string } | { kind: 'obs'; id: string } | null;
@@ -45,7 +45,22 @@ interface State {
   setObs: (id: string, o: Partial<Obstacle>) => void;
   addObs: (t: ObsType) => void;
   removeObs: (id: string) => void;
+  /** Tamaño del paso de los botones mover/girar: 0 fino, 1 normal, 2 grande. */
+  nudge: 0 | 1 | 2;
+  /** Mueve el objeto seleccionado dx metros al Este y dy al Norte (la casa arrastra lo que está sobre su techo). */
+  moveSel: (dx: number, dy: number) => void;
+  /** Gira el objeto seleccionado d grados en sentido horario visto desde arriba. */
+  rotateSel: (d: number) => void;
   set: (s: Partial<State>) => void;
+}
+
+export const NUDGE: [number, number][] = [[0.1, 1], [0.5, 5], [1, 15]];
+const r2 = (v: number) => Math.round(v * 100) / 100;
+const norm360 = (a: number) => r2(((a % 360) + 360) % 360);
+const norm180 = (a: number) => { const v = norm360(a); return v > 180 ? r2(v - 360) : v; };
+/** ¿El punto (x, y) cae sobre la planta de la casa? */
+function onHouse(p: Project, x: number, y: number) {
+  return !!p.house.enabled && !!distanceToHouse(p, { id: '', tipo: 'poste', x, y, alto: 0, ancho: 0, largo: 0, rot: 0, copa: 0 })?.inside;
 }
 
 const OBS_NEW: Record<ObsType, Omit<Obstacle, 'id'>> = {
@@ -117,6 +132,39 @@ export const useStore = create<State>((set, get) => {
       touch({ ...p, obstacles: [...p.obstacles, o] }); set({ sel: { kind: 'obs', id: o.id }, tab: 'objetos' });
     },
     removeObs: id => { touch({ ...get().project, obstacles: get().project.obstacles.filter(x => x.id !== id) }); set({ sel: null }); },
+    nudge: 1,
+    moveSel: (dx, dy) => {
+      const { sel, project: p } = get(); if (!sel) return;
+      const mv = <T extends { x: number; y: number }>(o: T): T => ({ ...o, x: r2(o.x + dx), y: r2(o.y + dy) });
+      if (sel.kind === 'house') {
+        if (!p.house.enabled) return;
+        // lo que está sobre el techo (campos, chimeneas) se mueve con la casa
+        touch({
+          ...p, house: mv(p.house),
+          fields: p.fields.map(f => (onHouse(p, f.x, f.y) ? mv(f) : f)),
+          obstacles: p.obstacles.map(o => (onHouse(p, o.x, o.y) ? mv(o) : o)),
+        });
+      } else if (sel.kind === 'field') touch({ ...p, fields: p.fields.map(f => (f.id === sel.id ? mv(f) : f)) });
+      else touch({ ...p, obstacles: p.obstacles.map(o => (o.id === sel.id ? mv(o) : o)) });
+    },
+    rotateSel: d => {
+      const { sel, project: p } = get(); if (!sel) return;
+      if (sel.kind === 'house') {
+        if (!p.house.enabled) return;
+        // gira en sentido horario alrededor del centro de la casa, junto con lo que está sobre el techo
+        const h = p.house, t = d * Math.PI / 180, c = Math.cos(t), s = Math.sin(t);
+        const rot = <T extends { x: number; y: number }>(o: T): T => {
+          const ex = o.x - h.x, ny = o.y - h.y;
+          return { ...o, x: r2(h.x + ex * c + ny * s), y: r2(h.y - ex * s + ny * c) };
+        };
+        touch({
+          ...p, house: { ...h, rot: norm360(h.rot + d) },
+          fields: p.fields.map(f => (onHouse(p, f.x, f.y) ? { ...rot(f), azim: f.montaje === 'inclinada' ? norm180(f.azim + d) : f.azim } : f)),
+          obstacles: p.obstacles.map(o => (onHouse(p, o.x, o.y) ? { ...rot(o), rot: norm360(o.rot + d) } : o)),
+        });
+      } else if (sel.kind === 'field') touch({ ...p, fields: p.fields.map(f => (f.id === sel.id ? { ...f, azim: norm180(f.azim + d) } : f)) });
+      else touch({ ...p, obstacles: p.obstacles.map(o => (o.id === sel.id ? { ...o, rot: norm360(o.rot + d) } : o)) });
+    },
     set: s => set(s as Partial<State>),
   };
 });

@@ -4,7 +4,7 @@ import { parseWeather, weatherSummary } from '../engine/weather';
 import { analyzeDay, analyzeYear } from '../sim/analyze';
 import { daySummary, hhmm } from '../sim/sunpath';
 import { STRING_COLORS, pct } from '../sim/viz';
-import { goStep, STEPS, useStore, type Clima, type Tab } from '../store';
+import { goStep, NUDGE, STEPS, useStore, type Clima, type Sel, type Tab } from '../store';
 import { parseFecha, useSim } from '../sim/useSim';
 import { H3, Num, Row, Seg } from './ui';
 
@@ -26,7 +26,60 @@ const More = ({ children, label = 'Más opciones' }: { children: ReactNode; labe
   <details className="more"><summary>{label}</summary><div>{children}</div></details>
 );
 
-const STEP_INFO: Record<Tab, { t: string; short: string; d: string }> = {
+/** Botón que repite la acción mientras se mantiene presionado (mouse o dedo). */
+function HoldButton({ onStep, children, title, className }: { onStep: () => void; children: ReactNode; title?: string; className?: string }) {
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const stop = () => { clearTimeout(timer.current); clearInterval(timer.current); };
+  const start = (e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    onStep(); stop();
+    timer.current = setTimeout(() => { timer.current = setInterval(onStep, 90); }, 400);
+  };
+  return <button type="button" className={className} title={title} onPointerDown={start} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop}
+    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onStep(); } }}>{children}</button>;
+}
+
+/**
+ * Mover y girar el objeto seleccionado con botones: cruz con los puntos cardinales (N arriba),
+ * giro horario/antihorario y tamaño del paso. Sin arrastrar en el 3D.
+ */
+function Mover({ target, x, y, rot, rotLabel = 'Giro' }: { target: Sel; x: number; y: number; rot?: number; rotLabel?: string }) {
+  const nudge = useStore(s => s.nudge), st = useStore.getState(), set = st.set;
+  // actúa siempre sobre el objeto de esta ficha (aunque se haya hecho clic en el vacío del 3D)
+  const moveSel = (dx: number, dy: number) => { set({ sel: target }); st.moveSel(dx, dy); };
+  const rotateSel = (d: number) => { set({ sel: target }); st.rotateSel(d); };
+  const [m, deg] = NUDGE[nudge];
+  const pos = (v: number, pos: string, neg: string) => (Math.abs(v) < 0.005 ? `0 m ${pos}` : `${Math.abs(v).toFixed(2)} m al ${v > 0 ? pos : neg}`);
+  return (
+    <div className="mover">
+      <div className="pad">
+        <span />
+        <HoldButton className="arr" onStep={() => moveSel(0, m)} title={`Mover ${m} m al Norte`}>▲<i>N</i></HoldButton>
+        <span />
+        <HoldButton className="arr" onStep={() => moveSel(-m, 0)} title={`Mover ${m} m al Oeste`}>◀<i>O</i></HoldButton>
+        <div className="mid"><b>{m} m</b></div>
+        <HoldButton className="arr" onStep={() => moveSel(m, 0)} title={`Mover ${m} m al Este`}><i>E</i>▶</HoldButton>
+        <span />
+        <HoldButton className="arr" onStep={() => moveSel(0, -m)} title={`Mover ${m} m al Sur`}>▼<i>S</i></HoldButton>
+        <span />
+      </div>
+      <div className="side">
+        <div className="where"><span>Posición</span>{pos(x, 'Este', 'Oeste')}<br />{pos(y, 'Norte', 'Sur')}</div>
+        {rot !== undefined && <div className="rot">
+          <span>{rotLabel}: <b>{rot.toFixed(0)}°</b> ({rumbo(rot)})</span>
+          <div>
+            <HoldButton onStep={() => rotateSel(-deg)} title={`Girar ${deg}° a la izquierda`}>⟲ {deg}°</HoldButton>
+            <HoldButton onStep={() => rotateSel(deg)} title={`Girar ${deg}° a la derecha`}>⟳ {deg}°</HoldButton>
+          </div>
+        </div>}
+        <div className="steps">{(['Fino', 'Normal', 'Grande'] as const).map((n, k) => (
+          <button key={n} className={nudge === k ? 'on' : ''} onClick={() => set({ nudge: k as 0 | 1 | 2 })} title={`${NUDGE[k][0]} m · ${NUDGE[k][1]}°`}>{n}</button>))}</div>
+      </div>
+    </div>
+  );
+}
+
+const STEP_INFO: Record<Tab,{ t: string; short: string; d: string }> = {
   sitio: { t: 'Ubicación', short: 'Lugar', d: 'Elige la ciudad del proyecto. La trayectoria del sol (3D y diagrama) cambia con la ubicación y el mes.' },
   casa: { t: 'Casa y techo', short: 'Casa', d: 'Indica las medidas de la casa y el tipo de techo donde irán los paneles.' },
   paneles: { t: 'Paneles', short: 'Paneles', d: 'Agrega los campos de paneles y define cuántas filas y módulos tiene cada uno.' },
@@ -85,11 +138,10 @@ function Casa() {
         <Seg value={h.techo} options={ROOF} onChange={techo => setHouse({ techo })} />
         {h.techo !== 'plano' && <label>Pendiente: <b className="am">{h.pendiente}°</b>
           <input type="range" min={5} max={60} step={1} value={h.pendiente} onChange={e => setHouse({ pendiente: +e.target.value })} /></label>}
-        <H3>Orientación</H3>
-        <label>El frente mira al <b className="am">{rumbo(h.rot)}</b> ({h.rot}°)
-          <input type="range" min={0} max={359} step={1} value={h.rot} onChange={e => setHouse({ rot: +e.target.value })} /></label>
-        <div className="quick">{[['N', 0], ['E', 90], ['S', 180], ['O', 270]].map(([n, a]) => <button key={n} className={h.rot === a ? 'on' : ''} onClick={() => setHouse({ rot: a as number })}>{n}</button>)}</div>
-        <p className="note">Altura de aleros {eaveHeight(h).toFixed(1)} m. El frente define hacia dónde cae el faldón frontal del techo.</p>
+        <H3>Posición y orientación</H3>
+        <Mover target={{ kind: 'house' }} x={h.x} y={h.y} rot={h.rot} rotLabel="El frente mira al" />
+        <div className="quick"><span>Frente al:</span>{([['N', 0], ['E', 90], ['S', 180], ['O', 270]] as [string, number][]).map(([n, a]) => <button key={n} className={h.rot === a ? 'on' : ''} onClick={() => { useStore.getState().set({ sel: { kind: 'house' } }); useStore.getState().rotateSel(a - h.rot); }}>{n}</button>)}</div>
+        <p className="note">Los paneles y chimeneas que están sobre el techo se mueven y giran junto con la casa. Altura de aleros {eaveHeight(h).toFixed(1)} m.</p>
         <More>
           <Row cols={3}>
             <Num label="Centro X" unit="m" value={h.x} onChange={x => setHouse({ x })} />
@@ -140,10 +192,8 @@ function Paneles() {
         <Seg value={f.montaje} options={[['coplanar', 'Pegado al techo'], ['inclinada', 'Con estructura']]} onChange={montaje => setField(f.id, { montaje })} />
         {f.montaje === 'inclinada' && <label>Inclinación: <b className="am">{f.tilt}°</b>
           <input type="range" min={TILT_RANGES[f.rango][0]} max={TILT_RANGES[f.rango][1]} step={1} value={f.tilt} onChange={e => setField(f.id, { tilt: +e.target.value })} /></label>}
-        {(f.montaje === 'inclinada' || info.tilt === 0) && <>
-          <label>Miran al <b className="am">{rumbo(f.azim)}</b> ({f.azim}°)
-            <input type="range" min={-180} max={180} step={1} value={f.azim} onChange={e => setField(f.id, { azim: +e.target.value })} /></label>
-        </>}
+        <label className="lblsm">Posición{(f.montaje === 'inclinada' || info.tilt === 0) ? ' y orientación' : ''}</label>
+        <Mover target={{ kind: 'field', id: f.id }} x={f.x} y={f.y} rot={f.montaje === 'inclinada' || info.tilt === 0 ? f.azim : undefined} rotLabel="Miran al" />
         <p className="note">Resultado: inclinación {info.tilt.toFixed(1)}° hacia el {rumbo(info.azim)} ({info.azim.toFixed(0)}°){f.montaje === 'coplanar' && info.tilt > 0 ? ', igual que el faldón' : ''}.</p>
         {info.avisos.map(a => <div key={a} className="warn">⚠ {a}</div>)}
         <More>
@@ -197,21 +247,26 @@ function Objetos() {
       </div>
       {o && <div className="card">
         <div className="eff"><span>Distancia a la casa</span><b>{dist ? (dist.inside ? 'sobre la casa' : `${dist.d.toFixed(2)} m`) : '—'}</b></div>
-        <Row cols={3}>
+        <Row>
           <Num label={o.tipo === 'chimenea' ? 'Alto sobre techo' : 'Alto'} unit="m" value={o.alto} min={0.1} onChange={alto => setObs(o.id, { alto })} />
-          <Num label="X (Este)" unit="m" value={o.x} onChange={x => setObs(o.id, { x })} />
-          <Num label="Y (Norte)" unit="m" value={o.y} onChange={y => setObs(o.id, { y })} />
+          {o.tipo === 'arbol' && <Num label="Diámetro copa" unit="m" value={o.copa} min={0.5} onChange={copa => setObs(o.id, { copa })} />}
+          {o.tipo === 'poste' && <Num label="Diámetro" unit="m" value={o.ancho} min={0.05} onChange={ancho => setObs(o.id, { ancho })} />}
         </Row>
-        {o.tipo === 'arbol' && <Row><Num label="Diámetro copa" unit="m" value={o.copa} min={0.5} onChange={copa => setObs(o.id, { copa })} /></Row>}
-        {o.tipo === 'poste' && <Row><Num label="Diámetro" unit="m" value={o.ancho} min={0.05} onChange={ancho => setObs(o.id, { ancho })} /></Row>}
-        {['edificio', 'muro', 'chimenea'].includes(o.tipo) && <More label="Medidas y giro">
+        <label className="lblsm">Posición{['edificio', 'muro', 'chimenea'].includes(o.tipo) ? ' y giro' : ''}</label>
+        <Mover target={{ kind: 'obs', id: o.id }} x={o.x} y={o.y} rot={['edificio', 'muro', 'chimenea'].includes(o.tipo) ? o.rot : undefined} />
+        <More label="Posición exacta (metros)">
+          <Row>
+            <Num label="X (Este)" unit="m" value={o.x} onChange={x => setObs(o.id, { x })} />
+            <Num label="Y (Norte)" unit="m" value={o.y} onChange={y => setObs(o.id, { y })} />
+          </Row>
+        </More>
+        {['edificio', 'muro', 'chimenea'].includes(o.tipo) && <More label="Medidas">
           <Row cols={3}>
             <Num label={o.tipo === 'muro' ? 'Largo' : 'Ancho'} unit="m" value={o.ancho} min={0.1} onChange={ancho => setObs(o.id, { ancho })} />
             <Num label={o.tipo === 'muro' ? 'Espesor' : 'Fondo'} unit="m" value={o.largo} min={0.05} onChange={largo => setObs(o.id, { largo })} />
-            <Num label="Giro" unit="°" value={o.rot} step={1} onChange={rot => setObs(o.id, { rot })} />
           </Row>
         </More>}
-        <p className="note">X = metros hacia el Este y Y = metros hacia el Norte desde el centro. La línea punteada en el 3D marca la distancia libre a la casa.</p>
+        <p className="note">La línea punteada en el 3D marca la distancia libre a la casa.</p>
         <button className="btn sec sm" onClick={() => removeObs(o.id)}>Eliminar objeto</button>
       </div>}
       <p className="note tip">💡 Abajo, en el <b>diagrama solar</b>, la zona gris es lo que tapa el sol: si la curva de un mes pasa por ahí, hay sombra en ese mes y hora.</p>
