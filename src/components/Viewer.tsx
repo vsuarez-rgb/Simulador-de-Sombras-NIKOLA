@@ -3,7 +3,7 @@ import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { Box, Module, Prim, Table } from '../engine/engine';
-import { distanceToHouse, housePrims, obstaclePrims, surfaceHeight, type House } from '../engine/project';
+import { distanceToHouse, obstaclePrims, surfaceHeight, volumePrims, type Volume } from '../engine/project';
 import { DESIGN_STEPS, useStore, type Sel, type Tab } from '../store';
 
 /** Selecciona un objeto; solo salta a su paso si se está diseñando (en Simular/Eléctrico se queda ahí). */
@@ -17,8 +17,14 @@ import { sunVector } from '../engine/engine';
 import { refDays, sunArc, sunHours } from '../sim/sunpath';
 
 const D2R = Math.PI / 180;
-/** Tamaño de la casa en planta incluidas las alas (para cámara y bóveda solar). */
-const houseSpan = (h: House) => Math.max(h.ancho, h.fondo) + (h.forma && h.forma !== 'rect' ? (h.alaLargo ?? 0) : 0);
+/** Centro y tamaño en planta del conjunto de volúmenes (para cámara y bóveda solar). */
+function volumesBox(vs: Volume[]): { cx: number; cy: number; span: number } {
+  if (!vs.length) return { cx: 0, cy: 0, span: 12 };
+  const r = (v: Volume) => Math.hypot(v.ancho, v.fondo) / 2;
+  const x0 = Math.min(...vs.map(v => v.x - r(v))), x1 = Math.max(...vs.map(v => v.x + r(v)));
+  const y0 = Math.min(...vs.map(v => v.y - r(v))), y1 = Math.max(...vs.map(v => v.y + r(v)));
+  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, span: Math.max(x1 - x0, y1 - y0) * 0.85 };
+}
 
 const v3 = (a: number[]) => new THREE.Vector3(a[0], a[1], a[2]);
 export type CamKind = '3d' | 'top' | 'sun';
@@ -72,27 +78,39 @@ function TriMesh({ tris, material, onClick }: { tris: Prim[]; material: THREE.Ma
   return <mesh geometry={geo} material={material} castShadow receiveShadow onClick={onClick} />;
 }
 
-// ---------- casa ----------
-function HouseMesh() {
-  const house = useStore(s => s.project.house), sel = useStore(s => s.sel);
-  const prims = useMemo(() => housePrims(house), [house]);
-  const selected = sel?.kind === 'house';
-  const click = (e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); pick({ kind: 'house' }, 'casa'); };
+// ---------- volúmenes (casa, ampliaciones, quincho…) ----------
+function VolumeMesh({ v, others }: { v: Volume; others: Volume[] }) {
+  const selected = useStore(s => s.sel?.kind === 'vol' && s.sel.id === v.id);
+  const prims = useMemo(() => volumePrims(v, others), [v, others]);
+  const click = (e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); pick({ kind: 'vol', id: v.id }, 'casa'); };
   const roofMat = useMemo(() => {
     const m = MAT.techo.clone(); if (selected) { m.emissive = SEL_EMISSIVE; m.emissiveIntensity = 0.2; } return m;
   }, [selected]);
   const wallTris = prims.filter(p => p.type === 'tri' && p.kind === 'muros'), roofTris = prims.filter(p => p.type === 'tri' && p.kind === 'techo');
-  if (!house.enabled) return null;
   return (
     <group>
       {prims.filter(p => p.type === 'box').map((p, i) => <PrimMesh key={i} p={p} selected={selected} onClick={click} />)}
       {roofTris.length > 0 && <TriMesh tris={roofTris} material={roofMat} onClick={click} />}
       {wallTris.length > 0 && <TriMesh tris={wallTris} material={MAT.muros} onClick={click} />}
-      {/* losa del techo plano de cada bloque: se gira igual que la caja de muros (−rot en Y) */}
-      {house.techo === 'plano' && prims.filter((p): p is Box => p.type === 'box' && p.kind === 'muros').map((b, i) => (
+      {/* losa del techo plano: se gira igual que la caja de muros (−rot en Y) */}
+      {v.techo === 'plano' && prims.filter((p): p is Box => p.type === 'box' && p.kind === 'muros').map((b, i) => (
         <group key={i} position={[b.c[0], b.h[1] * 2 + 0.01, b.c[2]]} rotation={[0, -b.rot * Math.PI / 180, 0]}>
-          <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow material={MAT.techoPlano} onClick={click}><planeGeometry args={[b.h[0] * 2, b.h[2] * 2]} /></mesh>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow material={selected ? roofMat : MAT.techoPlano} onClick={click}><planeGeometry args={[b.h[0] * 2, b.h[2] * 2]} /></mesh>
         </group>
+      ))}
+    </group>
+  );
+}
+function Volumes() {
+  const vs = useStore(s => s.project.volumes), showLabels = useStore(s => s.showLabels), tab = useStore(s => s.tab);
+  return (
+    <group>
+      {vs.map(v => <VolumeMesh key={v.id} v={v} others={vs.filter(o => o.id !== v.id)} />)}
+      {/* nombres de los volúmenes en el paso de diseño, si hay más de uno */}
+      {showLabels && tab === 'casa' && vs.length > 1 && vs.map(v => (
+        <Html key={v.id} position={[v.x, v.pisos * v.altoPiso + 2.2, -v.y]} center style={{ pointerEvents: 'none' }} zIndexRange={[8, 0]}>
+          <div className="lab vol">{v.nombre}</div>
+        </Html>
       ))}
     </group>
   );
@@ -215,9 +233,9 @@ function Obstacles() {
 // ---------- sol, cámara, escena ----------
 /** Centro y radio de la bóveda celeste dibujada alrededor del proyecto. */
 function useDome() {
-  const house = useStore(s => s.project.house);
-  const c: [number, number, number] = house.enabled ? [house.x, 0, -house.y] : [0, 0, 0];
-  const R = Math.min(35, Math.max(15, houseSpan(house) * 1.5));
+  const vs = useStore(s => s.project.volumes), bx = volumesBox(vs);
+  const c: [number, number, number] = [bx.cx, 0, -bx.cy];
+  const R = Math.min(35, Math.max(15, bx.span * 1.5));
   return { c, R };
 }
 type P3 = [number, number, number];
@@ -288,17 +306,17 @@ function Sun() {
 function CamRig() {
   const { camera, controls } = useThree() as unknown as { camera: THREE.PerspectiveCamera; controls: { target: THREE.Vector3; update: () => void } | null };
   const { sun } = useSim();
-  const house = useStore(s => s.project.house);
+  const vs = useStore(s => s.project.volumes);
   useEffect(() => {
     camBus.fn = (k: CamKind) => {
       if (!controls) return;
-      const span = Math.max(houseSpan(house), 14), c = new THREE.Vector3(house.x, 2, -house.y);
+      const bx = volumesBox(vs), span = Math.max(bx.span, 14), c = new THREE.Vector3(bx.cx, 2, -bx.cy);
       if (k === 'top') camera.position.set(c.x, span * 2.6, c.z + 0.001); // norte arriba
       else if (k === 'sun') { if (sun.el <= 0) return; camera.position.copy(v3(sun.vec).multiplyScalar(span * 2.4)).add(c); }
       else camera.position.set(c.x + span * 0.4, span * 3.6, c.z + span * 2.6); // desde el sur y en alto: Norte al fondo, se ven los paneles del faldón norte
       controls.target.copy(c); controls.update();
     };
-  }, [camera, controls, house, sun]);
+  }, [camera, controls, vs, sun]);
   const first = useRef(true);
   useEffect(() => { if (controls && first.current) { first.current = false; camBus.fn('3d'); } }, [controls]);
   return null;
@@ -323,7 +341,7 @@ export default function Viewer() {
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow><planeGeometry args={[400, 400]} /><meshStandardMaterial color="#d8d2c2" roughness={1} /></mesh>
       <gridHelper args={[200, 200, '#b8b2a2', '#c9c3b3']} position={[0, 0.005, 0]} />
       {!showSunPath && <Compass />}
-      <HouseMesh />
+      <Volumes />
       <Fields />
       <Obstacles />
       <OrbitControls makeDefault maxPolarAngle={Math.PI / 2 - 0.02} enableDamping />

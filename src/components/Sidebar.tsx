@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { distanceToHouse, eaveHeight, houseBlocks, TILT_RANGES, uid, type ElecTool, type House, type HouseShape, type ObsType, type RoofType, type TiltRange } from '../engine/project';
+import { distanceToHouse, eaveHeight, TILT_RANGES, uid, type ElecTool, type ObsType, type RoofType, type TiltRange, type Volume, type VolTipo } from '../engine/project';
 import { parseWeather, weatherSummary } from '../engine/weather';
 import { analyzeDay, analyzeYear } from '../sim/analyze';
 import { daySummary, hhmm } from '../sim/sunpath';
@@ -27,42 +27,6 @@ const ROOF: [RoofType, string][] = [['plano', 'Plano'], ['una_agua', '1 agua'], 
 
 /** Nombre del punto cardinal más cercano a un azimut (0 = Norte, sentido horario). */
 const rumbo = (az: number) => ['Norte', 'Noreste', 'Este', 'Sureste', 'Sur', 'Suroeste', 'Oeste', 'Noroeste'][Math.round((((az % 360) + 360) % 360) / 45) % 8];
-
-const SHAPES: [HouseShape, string, string][] = [
-  ['rect', 'Rectangular', 'M4 7h16v10H4z'],
-  ['L', 'En L', 'M4 5h16v7h-7v7H4z'],
-  ['T', 'En T', 'M3 5h18v6h-6v8H9v-8H3z'],
-  ['U', 'En U', 'M3 5h18v14h-6v-8H9v8H3z'],
-];
-
-/** Planta de la casa (Norte arriba) con el frente marcado; se actualiza al cambiar forma, medidas u orientación. */
-function PlanView({ h }: { h: House }) {
-  const blocks = houseBlocks(h);
-  if (!blocks.length) return null;
-  const poly = (b: House) => {
-    const r = b.rot * Math.PI / 180, ex = [Math.cos(r), -Math.sin(r)], ez = [-Math.sin(r), -Math.cos(r)], W = b.ancho / 2, D = b.fondo / 2;
-    return [[-W, -D], [W, -D], [W, D], [-W, D]].map(([lx, lz]) => [b.x + lx * ex[0] + lz * ez[0], b.y + lx * ex[1] + lz * ez[1]]);
-  };
-  const pts = blocks.map(poly), all = pts.flat();
-  const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-  const pad = Math.max(x1 - x0, y1 - y0) * 0.18 + 1, vb = [x0 - pad, -(y1 + pad), x1 - x0 + 2 * pad, y1 - y0 + 2 * pad];
-  // flecha del frente: desde el centro del cuerpo principal hacia su fachada
-  const m = blocks[0], r = m.rot * Math.PI / 180, f = [m.x + Math.sin(r) * (m.fondo / 2 + pad * 0.55), m.y + Math.cos(r) * (m.fondo / 2 + pad * 0.55)];
-  const k = vb[2] / 100; // escala de trazo y texto
-  return (
-    <div className="plan">
-      <svg viewBox={vb.join(' ')} preserveAspectRatio="xMidYMid meet">
-        {pts.map((p, i) => <polygon key={i} points={p.map(q => `${q[0]},${-q[1]}`).join(' ')} fill="rgba(250,183,4,.16)" stroke="#FAB704" strokeWidth={k * 1.2} strokeLinejoin="round" />)}
-        <line x1={m.x} y1={-m.y} x2={f[0]} y2={-f[1]} stroke="#fff" strokeWidth={k * 1.2} markerEnd="url(#fa)" />
-        <text x={f[0]} y={-f[1] - k * 3} fontSize={k * 7} fill="#fff" textAnchor="middle">frente</text>
-        <defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#fff" /></marker></defs>
-      </svg>
-      <span className="n">N ▲</span>
-      <span className="dims">{(x1 - x0).toFixed(1)} × {(y1 - y0).toFixed(1)} m</span>
-    </div>
-  );
-}
 
 /** Opciones avanzadas plegadas: lo esencial queda a la vista, el resto a un clic. */
 const More = ({ children, label = 'Más opciones' }: { children: ReactNode; label?: string }) => (
@@ -123,15 +87,15 @@ function Mover({ target, x, y, rot, rotLabel = 'Giro' }: { target: Sel; x: numbe
 }
 
 const STEP_INFO: Record<Tab,{ t: string; short: string; d: string }> = {
+  casa: { t: 'Diseño de la casa', short: 'Casa', d: 'Arma la casa con volúmenes: el cuerpo principal, ampliaciones de otro alto, un quincho o una bodega separada.' },
   sitio: { t: 'Ubicación', short: 'Lugar', d: 'Elige la ciudad del proyecto. La trayectoria del sol (3D y diagrama) cambia con la ubicación y el mes.' },
-  casa: { t: 'Casa y techo', short: 'Casa', d: 'Indica las medidas de la casa y el tipo de techo donde irán los paneles.' },
   paneles: { t: 'Paneles', short: 'Paneles', d: 'Agrega los campos de paneles y define cuántas filas y módulos tiene cada uno.' },
   objetos: { t: 'Sombras del entorno', short: 'Sombras', d: 'Agrega lo que puede dar sombra: árboles, edificios vecinos, postes, muros o chimeneas. Este paso es opcional.' },
   simular: { t: 'Simular', short: 'Simular', d: 'Calcula cuánto pierden los paneles por sombra en un día o en el año completo.' },
   electrico: { t: 'Eléctrico', short: 'Eléctrico', d: 'Ajusta inversor, strings y optimizadores, y compara cuánta energía se recupera.' },
 };
 
-// ---------- 1. Ubicación ----------
+// ---------- 2. Ubicación ----------
 function Sitio() {
   const p = useStore(s => s.project), { setSite, set } = useStore.getState(), fecha = useStore(s => s.fecha), showSunPath = useStore(s => s.showSunPath);
   const { y } = parseFecha(fecha), inv = daySummary(p.site, y, 6, 21), ver = daySummary(p.site, y, 12, 21), sur = p.site.lat < 0;
@@ -164,62 +128,106 @@ function Sitio() {
   );
 }
 
-// ---------- 2. Casa y techo ----------
+const VOL_ADD: [VolTipo, string, string, ReactNode][] = [
+  ['casa', 'Casa', 'Cuerpo principal (1 o más pisos)', ico(<><path d="M3 11l9-7 9 7" /><path d="M5 10v10h14V10" /><path d="M10 20v-5h4v5" /></>)],
+  ['ampliacion', 'Ampliación', 'Cuerpo pegado al costado', ico(<><path d="M2 12l6-5 6 5" /><path d="M3 11v9h10v-9" /><path d="M13 14h8v6h-8" /></>)],
+  ['quincho', 'Quincho', 'Construcción separada', ico(<><path d="M4 11l8-6 8 6" /><path d="M6 11v9M18 11v9" /><path d="M9 20v-4h6v4" /></>)],
+  ['garage', 'Garage / bodega', 'Techo plano, 1 piso', ico(<><rect x="3" y="8" width="18" height="12" rx="1" /><path d="M6 20v-7h12v7M6 16h12" /></>)],
+];
+
+/** Planta del diseño (Norte arriba): todos los volúmenes con su frente; clic para elegir uno. */
+function SitePlan() {
+  const vs = useStore(s => s.project.volumes), sel = useStore(s => s.sel), set = useStore(s => s.set);
+  if (!vs.length) return <div className="plan empty"><span>Agrega la casa con los botones de abajo</span></div>;
+  const poly = (b: Volume) => {
+    const r = b.rot * Math.PI / 180, ex = [Math.cos(r), -Math.sin(r)], ez = [-Math.sin(r), -Math.cos(r)], W = b.ancho / 2, D = b.fondo / 2;
+    return [[-W, -D], [W, -D], [W, D], [-W, D]].map(([lx, lz]) => [b.x + lx * ex[0] + lz * ez[0], b.y + lx * ex[1] + lz * ez[1]]);
+  };
+  const pts = vs.map(poly), all = pts.flat();
+  const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pad = Math.max(x1 - x0, y1 - y0, 8) * 0.14 + 1, vb = [x0 - pad, -(y1 + pad), x1 - x0 + 2 * pad, y1 - y0 + 2 * pad];
+  const k = Math.max(vb[2], vb[3] * 1.6) / 100; // escala de trazo y texto
+  return (
+    <div className="plan">
+      <svg viewBox={vb.join(' ')} preserveAspectRatio="xMidYMid meet">
+        <defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0L10 5L0 10z" fill="#fff" /></marker></defs>
+        {vs.map((v, i) => {
+          const on = sel?.kind === 'vol' && sel.id === v.id, r = v.rot * Math.PI / 180;
+          const f = [v.x + Math.sin(r) * (v.fondo / 2 + k * 5), v.y + Math.cos(r) * (v.fondo / 2 + k * 5)];
+          const e = [v.x + Math.sin(r) * (v.fondo / 2 - k * 1), v.y + Math.cos(r) * (v.fondo / 2 - k * 1)];
+          return (
+            <g key={v.id} className="pv" onClick={() => set({ sel: { kind: 'vol', id: v.id } })}>
+              <polygon points={pts[i].map(q => `${q[0]},${-q[1]}`).join(' ')} fill={on ? 'rgba(250,183,4,.35)' : 'rgba(250,183,4,.12)'} stroke="#FAB704" strokeWidth={k * (on ? 1.6 : 0.8)} strokeLinejoin="round" />
+              <line x1={e[0]} y1={-e[1]} x2={f[0]} y2={-f[1]} stroke="#fff" strokeWidth={k * 0.8} markerEnd="url(#fa)" />
+              <text x={v.x} y={-v.y + k * 1.2} fontSize={k * 3.4} fill="#fff" textAnchor="middle">{v.nombre} · {v.pisos}p</text>
+            </g>
+          );
+        })}
+      </svg>
+      <span className="n">N ▲</span>
+      <span className="dims">{(x1 - x0).toFixed(1)} × {(y1 - y0).toFixed(1)} m · flecha = frente</span>
+    </div>
+  );
+}
+
+// ---------- 1. Diseño de la casa ----------
 function Casa() {
-  const h = useStore(s => s.project.house), { setHouse } = useStore.getState();
+  const vs = useStore(s => s.project.volumes), sel = useStore(s => s.sel), fields = useStore(s => s.project.fields);
+  const { setVol, addVol, removeVol, dupVol, set } = useStore.getState();
+  const v = sel?.kind === 'vol' ? vs.find(x => x.id === sel.id) : undefined;
+  const mounted = v ? fields.filter(f => f.vol === v.id).length : 0;
   return (
     <>
-      <label className="check"><input type="checkbox" checked={h.enabled} onChange={e => setHouse({ enabled: e.target.checked })} /> Hay una casa o edificio</label>
-      {!h.enabled && <p className="note">Sin casa, los paneles van en el suelo o en un carport (paso siguiente).</p>}
-      {h.enabled && <>
-        <H3>Forma</H3>
-        <div className="shapes">{SHAPES.map(([k, n, d]) => (
-          <button key={k} className={(h.forma ?? 'rect') === k ? 'on' : ''} onClick={() => setHouse({ forma: k })} title={n}>
-            <svg viewBox="0 0 24 24" aria-hidden><path d={d} /></svg><span>{n}</span></button>))}</div>
-        <PlanView h={h} />
-        <H3>Medidas</H3>
+      <SitePlan />
+      <div className="voladd">{VOL_ADD.map(([t, n, d, ic]) => (
+        <button key={t} onClick={() => addVol(t)} title={d}>{ic}<span><b>+ {n}</b>{d}</span></button>))}</div>
+      {vs.length > 1 && <div className="list">{vs.map(x => (
+        <button key={x.id} className={'item' + (v?.id === x.id ? ' on' : '')} onClick={() => set({ sel: { kind: 'vol', id: x.id } })}>
+          <b>{x.nombre}</b><span>{x.ancho} × {x.fondo} m · {x.pisos} piso{x.pisos > 1 ? 's' : ''} · techo {ROOF.find(r => r[0] === x.techo)?.[1].toLowerCase()}</span></button>))}</div>}
+      {!v && vs.length > 0 && <p className="note">Elige un volumen en el plano (o en el 3D) para editarlo.</p>}
+      {v && <div className="card">
+        <label>Nombre<input value={v.nombre} onChange={e => setVol(v.id, { nombre: e.target.value })} /></label>
         <Row cols={3}>
-          <Num label="Ancho" unit="m" value={h.ancho} min={2} onChange={ancho => setHouse({ ancho })} />
-          <Num label="Fondo" unit="m" value={h.fondo} min={2} onChange={fondo => setHouse({ fondo })} />
-          <Num label="Pisos" value={h.pisos} step={1} min={1} max={30} onChange={pisos => setHouse({ pisos: Math.round(pisos) })} />
+          <Num label="Ancho" unit="m" value={v.ancho} min={1} onChange={ancho => setVol(v.id, { ancho })} />
+          <Num label="Fondo" unit="m" value={v.fondo} min={1} onChange={fondo => setVol(v.id, { fondo })} />
+          <Num label="Pisos" value={v.pisos} step={1} min={1} max={30} onChange={pisos => setVol(v.id, { pisos: Math.round(pisos) })} />
         </Row>
-        {(h.forma ?? 'rect') !== 'rect' && <>
-          <Row>
-            <Num label={h.forma === 'U' ? 'Ancho de cada ala' : 'Ancho del ala'} unit="m" value={h.alaAncho ?? 5} min={1} max={h.forma === 'U' ? h.ancho / 2 : h.ancho} onChange={alaAncho => setHouse({ alaAncho })} />
-            <Num label="Largo del ala" unit="m" value={h.alaLargo ?? 5} min={0.5} max={40} onChange={alaLargo => setHouse({ alaLargo })} />
-          </Row>
-          {h.forma === 'L' && <Seg value={String(h.alaLado ?? 1)} options={[['-1', 'Ala a la izquierda'], ['1', 'Ala a la derecha']]} onChange={v => setHouse({ alaLado: +v as 1 | -1 })} />}
-          <Seg value={String(h.alaSentido ?? 1)} options={[['1', 'Ala hacia atrás'], ['-1', 'Ala hacia el frente']]} onChange={v => setHouse({ alaSentido: +v as 1 | -1 })} />
-        </>}
-        <H3>Techo</H3>
-        <Seg value={h.techo} options={ROOF} onChange={techo => setHouse({ techo })} />
-        {h.techo !== 'plano' && <label>Pendiente: <b className="am">{h.pendiente}°</b>
-          <input type="range" min={5} max={60} step={1} value={h.pendiente} onChange={e => setHouse({ pendiente: +e.target.value })} /></label>}
-        <H3>Posición y orientación</H3>
-        <Mover target={{ kind: 'house' }} x={h.x} y={h.y} rot={h.rot} rotLabel="El frente mira al" />
-        <div className="quick"><span>Frente al:</span>{([['N', 0], ['E', 90], ['S', 180], ['O', 270]] as [string, number][]).map(([n, a]) => <button key={n} className={h.rot === a ? 'on' : ''} onClick={() => { useStore.getState().set({ sel: { kind: 'house' } }); useStore.getState().rotateSel(a - h.rot); }}>{n}</button>)}</div>
-        <p className="note">Los paneles y chimeneas que están sobre el techo se mueven y giran junto con la casa. Altura de aleros {eaveHeight(h).toFixed(1)} m.</p>
+        <label className="lblsm">Techo</label>
+        <Seg value={v.techo} options={ROOF} onChange={techo => setVol(v.id, { techo })} />
+        {v.techo !== 'plano' && <label>Pendiente: <b className="am">{v.pendiente}°</b>
+          <input type="range" min={5} max={60} step={1} value={v.pendiente} onChange={e => setVol(v.id, { pendiente: +e.target.value })} /></label>}
+        <label className="lblsm">Posición y orientación</label>
+        <Mover target={{ kind: 'vol', id: v.id }} x={v.x} y={v.y} rot={v.rot} rotLabel="El frente mira al" />
+        <div className="quick"><span>Frente al:</span>{([['N', 0], ['E', 90], ['S', 180], ['O', 270]] as [string, number][]).map(([n, a]) => (
+          <button key={n} className={v.rot === a ? 'on' : ''} onClick={() => { useStore.getState().set({ sel: { kind: 'vol', id: v.id } }); useStore.getState().rotateSel(a - v.rot); }}>{n}</button>))}</div>
+        <p className="note">Altura de aleros {eaveHeight(v).toFixed(1)} m.{mounted ? ` Tiene ${mounted} campo(s) de paneles encima: se mueven con él.` : ''}</p>
         <More>
           <Row cols={3}>
-            <Num label="Centro X" unit="m" value={h.x} onChange={x => setHouse({ x })} />
-            <Num label="Centro Y" unit="m" value={h.y} onChange={y => setHouse({ y })} />
-            <Num label="Alto por piso" unit="m" value={h.altoPiso} min={2} onChange={altoPiso => setHouse({ altoPiso })} />
+            <Num label="Alto por piso" unit="m" value={v.altoPiso} min={2} onChange={altoPiso => setVol(v.id, { altoPiso })} />
+            {v.techo !== 'plano' && <Num label="Alero" unit="m" value={v.alero} min={0} max={2} onChange={alero => setVol(v.id, { alero })} />}
+            {v.techo === 'plano' && <Num label="Parapeto" unit="m" value={v.parapeto} min={0} onChange={parapeto => setVol(v.id, { parapeto })} />}
           </Row>
-          <Row cols={3}>
-            {h.techo !== 'plano' && <Num label="Alero" unit="m" value={h.alero} min={0} max={2} onChange={alero => setHouse({ alero })} />}
-            {h.techo === 'plano' && <Num label="Parapeto" unit="m" value={h.parapeto} min={0} onChange={parapeto => setHouse({ parapeto })} />}
+          <Row>
+            <Num label="Centro X (Este)" unit="m" value={v.x} onChange={x => setVol(v.id, { x })} />
+            <Num label="Centro Y (Norte)" unit="m" value={v.y} onChange={y => setVol(v.id, { y })} />
           </Row>
-          <p className="note">X = metros hacia el Este, Y = metros hacia el Norte.</p>
         </More>
-      </>}
+        <div className="addrow">
+          <button className="btn ter" onClick={() => dupVol(v.id)}>Duplicar</button>
+          <button className="btn sec sm" onClick={() => removeVol(v.id)}>Eliminar</button>
+        </div>
+      </div>}
+      <p className="note tip"><span className="tipl">Consejo</span>Una casa de dos pisos con una parte de un piso se arma con dos volúmenes pegados (Casa + Ampliación). Un quincho o una bodega es otro volumen separado. Si los paneles van solo en el suelo, puedes no agregar ninguno.</p>
     </>
   );
 }
 
 // ---------- 3. Paneles ----------
 function Paneles() {
-  const p = useStore(s => s.project), sel = useStore(s => s.sel), { setField, addField, removeField, setModulo, set } = useStore.getState();
+  const p = useStore(s => s.project), sel = useStore(s => s.sel), { setField, addField, mountField, removeField, setModulo, set } = useStore.getState();
   const { fieldInfo, lay } = useSim();
+  const [roofVol, setRoofVol] = useState('');
   const f = sel?.kind === 'field' ? p.fields.find(x => x.id === sel.id) : undefined;
   const info = f ? fieldInfo.find(i => i.id === f.id) : undefined;
   const kwp = (lay.modules.length * p.modulo.pmax) / 1000;
@@ -234,11 +242,18 @@ function Paneles() {
         })}
       </div>
       <div className="addrow">
-        <button className="btn ter" onClick={() => addField('techo')} disabled={!p.house.enabled}>+ Campo en el techo</button>
-        <button className="btn ter" onClick={() => addField('suelo')}>+ Campo en suelo / carport</button>
+        {p.volumes.length > 1 && <select className="volsel" value={roofVol} onChange={e => setRoofVol(e.target.value)} title="Techo donde se agrega el campo">
+          <option value="">Techo más grande</option>{p.volumes.map(v => <option key={v.id} value={v.id}>{v.nombre}</option>)}</select>}
+        <button className="btn ter" onClick={() => addField('techo', roofVol || undefined)} disabled={!p.volumes.length}>+ Campo en el techo</button>
+        <button className="btn ter" onClick={() => addField('suelo')}>+ Campo en el suelo / carport</button>
       </div>
       {f && info && <div className="card">
         <label>Nombre<input value={f.nombre} onChange={e => setField(f.id, { nombre: e.target.value })} /></label>
+        <label>Va montado sobre
+          <select value={f.vol ?? ''} onChange={e => mountField(f.id, e.target.value || null)}>
+            {p.volumes.map(v => <option key={v.id} value={v.id}>Techo de: {v.nombre}</option>)}
+            <option value="">Suelo / carport</option>
+          </select></label>
         <Row>
           <Num label="Filas" value={f.filas} step={1} min={1} max={50} onChange={v => setField(f.id, { filas: Math.round(v) })} />
           <Num label="Módulos por fila" value={f.mods} step={1} min={1} max={100} onChange={v => setField(f.id, { mods: Math.round(v) })} />
@@ -474,7 +489,7 @@ function useStepDone(): Record<Tab, boolean> {
   const { lay, rs } = useSim();
   return {
     sitio: true,
-    casa: p.house.enabled || p.fields.length > 0,
+    casa: p.volumes.length > 0,
     paneles: lay.modules.length > 0,
     objetos: p.obstacles.length > 0,
     simular: !!(day || yearRes) && !stale,

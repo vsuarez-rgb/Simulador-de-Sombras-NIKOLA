@@ -2,22 +2,22 @@
 import { add, boxPrim, D2R, mul, sub, triPrim, type Layout, type Module, type Prim, type Table, type V3 } from './engine';
 
 export type RoofType = 'plano' | 'una_agua' | 'dos_aguas' | 'cuatro_aguas';
-export interface House {
-  enabled: boolean;
+/** Geometría de un cuerpo rectangular con techo (casa, ampliación, quincho…). */
+export interface Block {
   x: number; y: number;          // centro en planta (X Este, Y Norte), m
-  rot: number;                   // azimut del frente de la casa (0 = Norte)
+  rot: number;                   // azimut del frente (0 = Norte)
   ancho: number; fondo: number;  // ancho a lo largo del frente, fondo perpendicular
   pisos: number; altoPiso: number;
   techo: RoofType; pendiente: number; alero: number; parapeto: number;
-  /** Planta: rectangular o con alas (L, T, U). Las alas comparten pisos y tipo de techo. */
-  forma?: HouseShape;
-  alaAncho?: number;   // ancho del ala (m)
-  alaLargo?: number;   // cuánto sobresale el ala del cuerpo principal (m)
-  alaLado?: 1 | -1;    // L: ala a la derecha (1) o izquierda (-1) mirando el frente
-  alaSentido?: 1 | -1; // ala hacia atrás (1) o hacia adelante (-1)
 }
-export type HouseShape = 'rect' | 'L' | 'T' | 'U';
-export const HOUSE_SHAPE_DEFAULTS = { forma: 'rect' as HouseShape, alaAncho: 5, alaLargo: 5, alaLado: 1 as 1 | -1, alaSentido: 1 as 1 | -1 };
+export type VolTipo = 'casa' | 'ampliacion' | 'quincho' | 'garage';
+/** Un volumen del diseño: la casa se arma con uno o varios (dos pisos + un piso, quincho separado, etc.). */
+export interface Volume extends Block { id: string; nombre: string; tipo: VolTipo }
+/** Formato anterior (una sola casa, con alas opcionales); solo se usa para migrar proyectos guardados. */
+export interface House extends Block {
+  enabled: boolean;
+  forma?: 'rect' | 'L' | 'T' | 'U'; alaAncho?: number; alaLargo?: number; alaLado?: 1 | -1; alaSentido?: 1 | -1;
+}
 export type Mount = 'coplanar' | 'inclinada';
 export type TiltRange = '10-15' | '15-30' | '30-60';
 export const TILT_RANGES: Record<TiltRange, [number, number]> = { '10-15': [10, 15], '15-30': [15, 30], '30-60': [30, 60] };
@@ -27,6 +27,8 @@ export interface Field {
   montaje: Mount; rango: TiltRange; tilt: number; azim: number;
   filas: number; mods: number; enAlto: number; orient: 'V' | 'H';
   pitch: number; altura: number; // pitch (planta) entre filas para bases inclinadas; altura del borde inferior sobre la superficie
+  /** Volumen sobre cuyo techo va montado el campo (si no, va en el suelo o donde caiga). */
+  vol?: string;
 }
 export type ObsType = 'arbol' | 'poste' | 'edificio' | 'muro' | 'chimenea';
 export interface Obstacle { id: string; tipo: ObsType; x: number; y: number; alto: number; ancho: number; largo: number; rot: number; copa: number }
@@ -47,7 +49,13 @@ export interface Weather {
   m: number[]; d: number[]; h: number[]; ghi: number[]; dni: number[]; dhi: number[]; ta: number[];
 }
 export interface Site { nombre: string; lat: number; lon: number; tz: number; albedo: number }
-export interface Project { version: 2; nombre: string; site: Site; modulo: ModuleSpec; house: House; fields: Field[]; obstacles: Obstacle[]; elec: ElecConfig; clima?: Weather | null }
+export interface Project {
+  version: 2; nombre: string; site: Site; modulo: ModuleSpec;
+  volumes: Volume[];
+  /** @deprecated formato anterior, se convierte a `volumes` al cargar. */
+  house?: House;
+  fields: Field[]; obstacles: Obstacle[]; elec: ElecConfig; clima?: Weather | null;
+}
 
 export const DEFAULT_MODULE: ModuleSpec = {
   largo: 2.278, ancho: 1.134, gap: 0.02, pmax: 550, voc: 49.6, isc: 14.0, vmp: 41.6, imp: 13.22, celdas: 72, gammaP: -0.35, noct: 45,
@@ -55,21 +63,37 @@ export const DEFAULT_MODULE: ModuleSpec = {
 export const DEFAULT_ELEC: ElecConfig = {
   mpptMin: 90, mpptMax: 560, nMppt: 2, optEff: 0.99, modo: 'auto', modsPorString: 10, strings: [], optimizados: [], excluidos: [],
 };
-/** Completa proyectos guardados con versiones anteriores. */
-export function migrate(p: Project): Project {
-  return { ...p, house: { ...HOUSE_SHAPE_DEFAULTS, ...p.house }, modulo: { ...DEFAULT_MODULE, ...p.modulo }, elec: { ...DEFAULT_ELEC, ...(p.elec ?? {}) }, clima: p.clima ?? null };
-}
 export const uid = () => Math.random().toString(36).slice(2, 8);
 
+/** Plantillas para agregar volúmenes en el diseñador. */
+export const VOL_TEMPLATES: Record<VolTipo, Omit<Volume, 'id' | 'x' | 'y' | 'rot'>> = {
+  casa: { nombre: 'Casa', tipo: 'casa', ancho: 12, fondo: 8, pisos: 2, altoPiso: 2.6, techo: 'dos_aguas', pendiente: 25, alero: 0.5, parapeto: 0.8 },
+  ampliacion: { nombre: 'Ampliación', tipo: 'ampliacion', ancho: 5, fondo: 5, pisos: 1, altoPiso: 2.5, techo: 'una_agua', pendiente: 12, alero: 0.3, parapeto: 0.5 },
+  quincho: { nombre: 'Quincho', tipo: 'quincho', ancho: 5, fondo: 4, pisos: 1, altoPiso: 2.6, techo: 'dos_aguas', pendiente: 20, alero: 0.4, parapeto: 0.5 },
+  garage: { nombre: 'Garage / bodega', tipo: 'garage', ancho: 6, fondo: 3.5, pisos: 1, altoPiso: 2.6, techo: 'plano', pendiente: 5, alero: 0, parapeto: 0.3 },
+};
+
+/** Completa proyectos guardados con versiones anteriores (la casa única con alas pasa a volúmenes). */
+export function migrate(p: Project): Project {
+  let volumes = p.volumes;
+  if (!Array.isArray(volumes)) {
+    const h = p.house;
+    volumes = h ? legacyBlocks(h).map((b, i) => ({ ...b, id: uid(), nombre: i === 0 ? 'Casa' : `Ala ${i}`, tipo: (i === 0 ? 'casa' : 'ampliacion') as VolTipo })) : [];
+  }
+  const { house: _old, ...rest } = p; // eslint-disable-line @typescript-eslint/no-unused-vars
+  return { ...rest, volumes, modulo: { ...DEFAULT_MODULE, ...p.modulo }, elec: { ...DEFAULT_ELEC, ...(p.elec ?? {}) }, clima: p.clima ?? null };
+}
+
 export function defaultProject(): Project {
+  const casa: Volume = { ...VOL_TEMPLATES.casa, id: uid(), x: 0, y: 0, rot: 0 };
   return {
     version: 2, nombre: 'Proyecto nuevo',
     site: { nombre: 'Santiago', lat: -33.45, lon: -70.66, tz: -3, albedo: 0.2 },
     modulo: DEFAULT_MODULE,
     elec: DEFAULT_ELEC, clima: null,
-    house: { enabled: true, x: 0, y: 0, rot: 0, ancho: 12, fondo: 8, pisos: 2, altoPiso: 2.6, techo: 'dos_aguas', pendiente: 25, alero: 0.5, parapeto: 0.8, ...HOUSE_SHAPE_DEFAULTS },
+    volumes: [casa],
     fields: [
-      { id: uid(), nombre: 'Techo norte', x: 0, y: 2.2, montaje: 'coplanar', rango: '10-15', tilt: 12, azim: 0, filas: 2, mods: 5, enAlto: 1, orient: 'V', pitch: 3, altura: 0.12 },
+      { id: uid(), nombre: 'Techo norte', x: 0, y: 2.2, montaje: 'coplanar', rango: '10-15', tilt: 12, azim: 0, filas: 2, mods: 5, enAlto: 1, orient: 'V', pitch: 3, altura: 0.12, vol: casa.id },
     ],
     obstacles: [
       { id: uid(), tipo: 'arbol', x: -11, y: 6, alto: 9, ancho: 0, largo: 0, rot: 0, copa: 5 },
@@ -79,49 +103,49 @@ export function defaultProject(): Project {
   };
 }
 
-// ---------- Casa ----------
-export const eaveHeight = (h: House) => h.pisos * h.altoPiso;
-function houseAxes(h: House) {
+// ---------- Volúmenes (casa, ampliaciones, quincho…) ----------
+export const eaveHeight = (h: Block) => h.pisos * h.altoPiso;
+function houseAxes(h: Block) {
   const r = h.rot * D2R;
-  // frente de la casa mira al azimut rot. Local x: a lo largo del frente; local z: hacia atrás.
+  // el frente mira al azimut rot. Local x: a lo largo del frente; local z: hacia atrás.
   const ex: V3 = [Math.cos(r), 0, Math.sin(r)], ez: V3 = [-Math.sin(r), 0, Math.cos(r)];
   const c: V3 = [h.x, 0, -h.y];
   return { ex, ez, c };
 }
-export function toLocal(h: House, x: number, yN: number) {
+export function toLocal(h: Block, x: number, yN: number) {
   const { ex, ez, c } = houseAxes(h);
   const d: V3 = [x - c[0], 0, -yN - c[2]];
   return { lx: d[0] * ex[0] + d[2] * ex[2], lz: d[0] * ez[0] + d[2] * ez[2] };
 }
-function toWorld(h: House, lx: number, y: number, lz: number): V3 {
+export function toWorld(h: Block, lx: number, y: number, lz: number): V3 {
   const { ex, ez, c } = houseAxes(h);
   return add(add([c[0], y, c[2]], mul(ex, lx)), mul(ez, lz));
 }
-const halfDims = (h: House) => {
+const halfDims = (h: Block) => {
   const o = h.techo === 'plano' ? 0 : h.alero;
   return { Wh: h.ancho / 2 + o, Dh: h.fondo / 2 + o, o };
 };
-/**
- * La casa como bloques rectangulares: cuerpo principal + alas. Cada ala es un bloque girado 90°
- * (su cumbrera corre a lo largo del ala) que nace en el centro del cuerpo, así los techos se
- * intersectan solos (la unión de los bloques forma la limahoya de una L, T o U).
- */
-export function houseBlocks(h: House): House[] {
+/** Casa del formato anterior (con alas L/T/U) como bloques rectangulares. */
+function legacyBlocks(h: House): Block[] {
   if (!h.enabled) return [];
-  const main: House = { ...h, forma: 'rect' };
-  const forma = h.forma ?? 'rect';
+  const { enabled: _e, forma = 'rect', alaAncho = 5, alaLargo = 5, alaLado = 1, alaSentido = 1, ...main } = h; // eslint-disable-line @typescript-eslint/no-unused-vars
   if (forma === 'rect') return [main];
-  const a = Math.max(1, Math.min(h.alaAncho ?? 5, h.ancho)), l = Math.max(0.5, h.alaLargo ?? 5);
-  const sz = h.alaSentido ?? 1, D2 = h.fondo / 2, len = D2 + l, lz = sz * len / 2;
-  const xs = forma === 'T' ? [0] : forma === 'U' ? [-1, 1].map(s => s * (h.ancho / 2 - a / 2)) : [(h.alaLado ?? 1) * (h.ancho / 2 - a / 2)];
+  const a = Math.max(1, Math.min(alaAncho, h.ancho)), l = Math.max(0.5, alaLargo);
+  const len = h.fondo / 2 + l, lz = alaSentido * len / 2;
+  const xs = forma === 'T' ? [0] : forma === 'U' ? [-1, 1].map(s => s * (h.ancho / 2 - a / 2)) : [alaLado * (h.ancho / 2 - a / 2)];
   return [main, ...xs.map(lx => {
     const w = toWorld(h, lx, 0, lz);
-    return { ...h, forma: 'rect' as HouseShape, x: w[0], y: -w[2], rot: (((h.rot + 90 * sz) % 360) + 360) % 360, ancho: len, fondo: a };
+    return { ...main, x: w[0], y: -w[2], rot: (((h.rot + 90 * alaSentido) % 360) + 360) % 360, ancho: len, fondo: a };
   })];
 }
 
-/** Altura del techo de un bloque en un punto de planta; null si el punto no está sobre ese bloque. */
-function blockRoofHeight(h: House, x: number, yN: number): number | null {
+/** ¿El punto de planta cae dentro de los muros del volumen? */
+export function insideBlock(b: Block, x: number, yN: number, margin = 0) {
+  const { lx, lz } = toLocal(b, x, yN);
+  return Math.abs(lx) <= b.ancho / 2 - margin && Math.abs(lz) <= b.fondo / 2 - margin;
+}
+/** Altura del techo de un volumen en un punto de planta; null si el punto no está sobre ese techo. */
+export function blockRoofHeight(h: Block, x: number, yN: number): number | null {
   const { lx, lz } = toLocal(h, x, yN), { Wh, Dh, o } = halfDims(h);
   if (Math.abs(lx) > Wh || Math.abs(lz) > Dh) return null;
   const H = eaveHeight(h), tp = Math.tan(h.pendiente * D2R), H0 = H - o * tp;
@@ -132,23 +156,27 @@ function blockRoofHeight(h: House, x: number, yN: number): number | null {
     case 'cuatro_aguas': return H0 + Math.min(Dh - Math.abs(lz), Wh - Math.abs(lx)) * tp;
   }
 }
-/** Bloque cuyo techo es el más alto en el punto (la superficie visible de la unión). */
-function topBlock(h: House, x: number, yN: number): { b: House; y: number; i: number } | null {
-  let best: { b: House; y: number; i: number } | null = null;
-  houseBlocks(h).forEach((b, i) => { const y = blockRoofHeight(b, x, yN); if (y != null && (!best || y > best.y)) best = { b, y, i }; });
+/** Volumen cuyo techo es el más alto en el punto (la superficie visible de la unión). */
+function topBlock(vs: Block[], x: number, yN: number): { b: Block; y: number; i: number } | null {
+  let best: { b: Block; y: number; i: number } | null = null;
+  vs.forEach((b, i) => { const y = blockRoofHeight(b, x, yN); if (y != null && (!best || y > best.y)) best = { b, y, i }; });
   return best;
 }
-/** Altura del techo en un punto de planta; null si el punto no está sobre el techo. */
-export function roofHeightAt(h: House, x: number, yN: number): number | null {
-  return topBlock(h, x, yN)?.y ?? null;
+/** Altura del techo en un punto de planta; null si el punto no está sobre ningún techo. */
+export function roofHeightAt(vs: Block[], x: number, yN: number): number | null {
+  return topBlock(vs, x, yN)?.y ?? null;
 }
-/** Faldón del techo en un punto: inclinación y azimut de la superficie. */
-export function roofFaceAt(h0: House, x: number, yN: number): { tilt: number; azim: number; nombre: string } | null {
-  const t = topBlock(h0, x, yN); if (!t) return null;
-  const f = blockFace(t.b, x, yN);
-  return t.i === 0 ? f : { ...f, nombre: 'ala ' + t.i + ': ' + f.nombre };
+/** Faldón del techo en un punto (el más alto si hay varios volúmenes). */
+export function roofFaceAt(vs: Volume[], x: number, yN: number): { tilt: number; azim: number; nombre: string } | null {
+  const t = topBlock(vs, x, yN); if (!t) return null;
+  return volumeFace(vs[t.i], x, yN, vs.length > 1);
 }
-function blockFace(h: House, x: number, yN: number): { tilt: number; azim: number; nombre: string } {
+/** Faldón de un volumen concreto en un punto; con `named` antepone el nombre del volumen. */
+export function volumeFace(v: Volume, x: number, yN: number, named = true) {
+  const f = blockFace(v, x, yN);
+  return named ? { ...f, nombre: `${v.nombre}: ${f.nombre}` } : f;
+}
+function blockFace(h: Block, x: number, yN: number): { tilt: number; azim: number; nombre: string } {
   const { lx, lz } = toLocal(h, x, yN), { Wh, Dh } = halfDims(h), az = (d: number) => ((h.rot + d) % 360 + 360) % 360;
   switch (h.techo) {
     case 'plano': return { tilt: 0, azim: h.rot, nombre: 'techo plano' };
@@ -159,17 +187,32 @@ function blockFace(h: House, x: number, yN: number): { tilt: number; azim: numbe
       return lz < 0 ? { tilt: h.pendiente, azim: az(0), nombre: 'faldón frontal' } : { tilt: h.pendiente, azim: az(180), nombre: 'faldón trasero' };
   }
 }
-export const surfaceHeight = (p: Project, x: number, yN: number) => roofHeightAt(p.house, x, yN) ?? 0;
+export const surfaceHeight = (p: Project, x: number, yN: number) => roofHeightAt(p.volumes, x, yN) ?? 0;
 
-/** Triángulos del techo (y muros piñón) + cajas de muros de todos los bloques. Se usan para el cálculo y para dibujar. */
-export function housePrims(h: House): Prim[] {
-  const blocks = houseBlocks(h);
-  return blocks.flatMap((b, i) => blockPrims(b, blocks.filter((_, j) => j !== i)));
+/**
+ * Mejor lugar para un campo de paneles sobre un volumen: el centro del faldón que mira hacia el
+ * ecuador (Norte en Chile). En techo plano devuelve el centro y la orientación sugerida.
+ */
+export function roofSpot(v: Block, lat: number): { x: number; y: number; azim: number; plano: boolean } {
+  const eq = lat < 0 ? 0 : 180, diff = (a: number) => Math.abs(((a - eq + 540) % 360) - 180);
+  const at = (lx: number, lz: number) => { const w = toWorld(v, lx, 0, lz); return { x: Math.round(w[0] * 100) / 100, y: Math.round(-w[2] * 100) / 100 }; };
+  if (v.techo === 'plano') return { ...at(0, 0), azim: eq === 0 ? 0 : 180, plano: true };
+  if (v.techo === 'una_agua') return { ...at(0, 0), azim: v.rot, plano: false };
+  const cands: [number, number, number][] = [[0, -v.fondo / 4, v.rot], [0, v.fondo / 4, v.rot + 180]];
+  if (v.techo === 'cuatro_aguas' && v.ancho < v.fondo) cands.push([v.ancho / 4, 0, v.rot + 90], [-v.ancho / 4, 0, v.rot + 270]);
+  const best = cands.reduce((a, b) => (diff(b[2]) < diff(a[2]) ? b : a));
+  return { ...at(best[0], best[1]), azim: ((best[2] % 360) + 360) % 360, plano: false };
 }
-/** ¿El punto de planta cae dentro de los muros de alguno de los bloques? */
-const insideAny = (bs: House[], x: number, yN: number) => bs.some(b => { const { lx, lz } = toLocal(b, x, yN); return Math.abs(lx) < b.ancho / 2 - 0.05 && Math.abs(lz) < b.fondo / 2 - 0.05; });
 
-function blockPrims(h: House, others: House[]): Prim[] {
+/** Triángulos del techo (y muros piñón) + cajas de muros de todos los volúmenes. Se usan para el cálculo. */
+export function housePrims(vs: Block[]): Prim[] {
+  return vs.flatMap((b, i) => volumePrims(b, vs.filter((_, j) => j !== i)));
+}
+/** ¿El punto de planta cae dentro de los muros de alguno de los volúmenes? */
+const insideAny = (bs: Block[], x: number, yN: number) => bs.some(b => insideBlock(b, x, yN, 0.05));
+
+/** Geometría de un volumen; `others` sirve para no dibujar parapetos dentro de un volumen vecino. */
+export function volumePrims(h: Block, others: Block[] = []): Prim[] {
   const H = eaveHeight(h), tp = Math.tan(h.pendiente * D2R), { Wh, Dh, o } = halfDims(h), H0 = H - o * tp;
   const W2 = h.ancho / 2, D2 = h.fondo / 2;
   const P = (lx: number, y: number, lz: number) => toWorld(h, lx, y, lz);
@@ -219,9 +262,16 @@ function blockPrims(h: House, others: House[]): Prim[] {
 }
 
 // ---------- Campos de paneles ----------
-/** Inclinación y azimut efectivos del campo (coplanar toma los del faldón donde está su centro). */
+/** Volumen sobre el que va montado el campo (si existe). */
+export const fieldVolume = (p: Project, f: Field) => (f.vol ? p.volumes.find(v => v.id === f.vol) : undefined);
+/** Superficie bajo un punto para un campo: el techo de su volumen si lo tiene; si no, la más alta. */
+function fieldSurface(p: Project, v: Volume | undefined, x: number, yN: number) {
+  return (v ? blockRoofHeight(v, x, yN) : null) ?? surfaceHeight(p, x, yN);
+}
+/** Inclinación y azimut efectivos del campo (coplanar toma los del faldón de su volumen bajo su centro). */
 export function fieldOrientation(p: Project, f: Field) {
-  const face = roofFaceAt(p.house, f.x, f.y);
+  const v = fieldVolume(p, f);
+  const face = v ? (blockRoofHeight(v, f.x, f.y) != null ? volumeFace(v, f.x, f.y, p.volumes.length > 1) : null) : roofFaceAt(p.volumes, f.x, f.y);
   if (f.montaje === 'coplanar') {
     if (face && face.tilt > 0) return { tilt: face.tilt, azim: face.azim, superficie: face.nombre };
     return { tilt: 0, azim: f.azim, superficie: face ? face.nombre : 'suelo' };
@@ -235,7 +285,8 @@ export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] }
   const tables: Table[] = [], modules: Module[] = [], fieldInfo: FieldInfo[] = [];
   const { largo, ancho, gap } = p.modulo;
   p.fields.forEach((f, fi) => {
-    const o = fieldOrientation(p, f), beta = o.tilt * D2R, gam = o.azim * D2R;
+    const o = fieldOrientation(p, f), beta = o.tilt * D2R, gam = o.azim * D2R, fv = fieldVolume(p, f);
+    const onIt = (x: number, yN: number) => (fv ? blockRoofHeight(fv, x, yN) : roofHeightAt(p.volumes, x, yN)) != null;
     const fdir: V3 = [Math.sin(gam), 0, -Math.cos(gam)], u: V3 = [Math.cos(gam), 0, Math.sin(gam)];
     const v: V3 = add(mul(fdir, -Math.cos(beta)), [0, Math.sin(beta), 0]);
     const n: V3 = add(mul(fdir, Math.sin(beta)), [0, Math.cos(beta), 0]);
@@ -255,14 +306,14 @@ export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] }
       let y: number;
       if (coplanar) {
         const mid = add(lc, mul(fdir, -L * Math.cos(beta) / 2));
-        y = surfaceHeight(p, mid[0], -mid[2]) - (L / 2) * Math.sin(beta) + f.altura;
-      } else y = surfaceHeight(p, lc[0], -lc[2]) + f.altura;
+        y = fieldSurface(p, fv, mid[0], -mid[2]) - (L / 2) * Math.sin(beta) + f.altura;
+      } else y = fieldSurface(p, fv, lc[0], -lc[2]) + f.altura;
       const P = sub([lc[0], y, lc[2]], mul(u, W / 2));
       const id = tables.length;
       tables.push({ id, field: fi, P, u, v, n, W, L });
       for (const [a, b] of [[0, 0], [W, 0], [W, L], [0, L]]) {
         const c = add(add(P, mul(u, a)), mul(v, b)); corners.push(c);
-        if (roofHeightAt(p.house, c[0], -c[2]) != null) onRoof++; else offRoof++;
+        if (onIt(c[0], -c[2])) onRoof++; else offRoof++;
       }
       for (let k = 0; k < f.enAlto; k++) for (let c = 0; c < f.mods; c++) {
         modules.push({
@@ -275,7 +326,7 @@ export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] }
     if (onRoof && offRoof) avisos.push('El campo sobresale del borde del techo');
     if (coplanar && o.superficie !== 'suelo' && onRoof) {
       // ¿cruza a otro faldón?
-      const names = new Set(corners.map(c => roofFaceAt(p.house, c[0], -c[2])?.nombre).filter(Boolean));
+      const names = new Set(corners.map(c => (fv ? (blockRoofHeight(fv, c[0], -c[2]) != null ? volumeFace(fv, c[0], -c[2]).nombre : null) : roofFaceAt(p.volumes, c[0], -c[2])?.nombre)).filter(Boolean));
       if (names.size > 1) avisos.push('El campo cruza la cumbrera / otro faldón');
     }
     if (f.montaje === 'inclinada') {
@@ -288,7 +339,7 @@ export function buildLayout(p: Project): { lay: Layout; fieldInfo: FieldInfo[] }
     fieldInfo.push({ id: f.id, superficie: o.superficie, tilt: o.tilt, azim: o.azim, avisos, corners });
   });
 
-  const prims: Prim[] = [...housePrims(p.house)];
+  const prims: Prim[] = [...housePrims(p.volumes)];
   for (const ob of p.obstacles) prims.push(...obstaclePrims(p, ob));
   return { lay: { tables, modules, prims }, fieldInfo };
 }
@@ -312,13 +363,13 @@ export function obstaclePrims(p: Project, ob: Obstacle): Prim[] {
 /** Distancia horizontal borde a borde entre un obstáculo y los muros de la casa, con los puntos más cercanos. */
 export function distanceToHouse(p: Project, ob: Obstacle): { d: number; a: [number, number]; b: [number, number]; inside: boolean } | null {
   let best: ReturnType<typeof blockDistance> = null;
-  for (const b of houseBlocks(p.house)) {
+  for (const b of p.volumes) {
     const r = blockDistance(b, ob);
     if (r && (!best || (r.inside && !best.inside) || (!best.inside && r.d < best.d))) best = r;
   }
   return best;
 }
-function blockDistance(h: House, ob: Obstacle): { d: number; a: [number, number]; b: [number, number]; inside: boolean } | null {
+function blockDistance(h: Block, ob: Obstacle): { d: number; a: [number, number]; b: [number, number]; inside: boolean } | null {
   const { lx, lz } = toLocal(h, ob.x, ob.y), W2 = h.ancho / 2, D2 = h.fondo / 2;
   const cx = Math.max(-W2, Math.min(W2, lx)), cz = Math.max(-D2, Math.min(D2, lz));
   const inside = Math.abs(lx) <= W2 && Math.abs(lz) <= D2;

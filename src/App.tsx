@@ -90,8 +90,8 @@ function ViewButtons() {
 }
 
 const PASOS: [string, string][] = [
+  ['Casa', 'Arma la casa con volúmenes: dos pisos, ampliaciones, quincho…'],
   ['Lugar', 'Elige la ciudad: el recorrido del sol depende de dónde estás.'],
-  ['Casa', 'Medidas, techo y hacia dónde mira el frente.'],
   ['Paneles', 'Cuántas filas y módulos, y cómo van montados.'],
   ['Sombras', 'Árboles, edificios y postes que pueden tapar el sol.'],
   ['Simular', 'Calcula la pérdida de energía por sombra en el año.'],
@@ -102,7 +102,7 @@ function Welcome() {
   if (!intro) return null;
   const close = (start: boolean) => {
     try { localStorage.setItem('nikola-sombras-intro', '1'); } catch { /* */ }
-    set({ intro: false }); if (start) goStep('sitio');
+    set({ intro: false }); if (start) goStep('casa');
   };
   return (
     <div className="modal" onClick={() => close(false)}>
