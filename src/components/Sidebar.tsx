@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { distanceToHouse, eaveHeight, TILT_RANGES, uid, type ElecTool, type ObsType, type RoofType, type TiltRange } from '../engine/project';
+import { distanceToHouse, eaveHeight, houseBlocks, TILT_RANGES, uid, type ElecTool, type House, type HouseShape, type ObsType, type RoofType, type TiltRange } from '../engine/project';
 import { parseWeather, weatherSummary } from '../engine/weather';
 import { analyzeDay, analyzeYear } from '../sim/analyze';
 import { daySummary, hhmm } from '../sim/sunpath';
@@ -27,6 +27,42 @@ const ROOF: [RoofType, string][] = [['plano', 'Plano'], ['una_agua', '1 agua'], 
 
 /** Nombre del punto cardinal más cercano a un azimut (0 = Norte, sentido horario). */
 const rumbo = (az: number) => ['Norte', 'Noreste', 'Este', 'Sureste', 'Sur', 'Suroeste', 'Oeste', 'Noroeste'][Math.round((((az % 360) + 360) % 360) / 45) % 8];
+
+const SHAPES: [HouseShape, string, string][] = [
+  ['rect', 'Rectangular', 'M4 7h16v10H4z'],
+  ['L', 'En L', 'M4 5h16v7h-7v7H4z'],
+  ['T', 'En T', 'M3 5h18v6h-6v8H9v-8H3z'],
+  ['U', 'En U', 'M3 5h18v14h-6v-8H9v8H3z'],
+];
+
+/** Planta de la casa (Norte arriba) con el frente marcado; se actualiza al cambiar forma, medidas u orientación. */
+function PlanView({ h }: { h: House }) {
+  const blocks = houseBlocks(h);
+  if (!blocks.length) return null;
+  const poly = (b: House) => {
+    const r = b.rot * Math.PI / 180, ex = [Math.cos(r), -Math.sin(r)], ez = [-Math.sin(r), -Math.cos(r)], W = b.ancho / 2, D = b.fondo / 2;
+    return [[-W, -D], [W, -D], [W, D], [-W, D]].map(([lx, lz]) => [b.x + lx * ex[0] + lz * ez[0], b.y + lx * ex[1] + lz * ez[1]]);
+  };
+  const pts = blocks.map(poly), all = pts.flat();
+  const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pad = Math.max(x1 - x0, y1 - y0) * 0.18 + 1, vb = [x0 - pad, -(y1 + pad), x1 - x0 + 2 * pad, y1 - y0 + 2 * pad];
+  // flecha del frente: desde el centro del cuerpo principal hacia su fachada
+  const m = blocks[0], r = m.rot * Math.PI / 180, f = [m.x + Math.sin(r) * (m.fondo / 2 + pad * 0.55), m.y + Math.cos(r) * (m.fondo / 2 + pad * 0.55)];
+  const k = vb[2] / 100; // escala de trazo y texto
+  return (
+    <div className="plan">
+      <svg viewBox={vb.join(' ')} preserveAspectRatio="xMidYMid meet">
+        {pts.map((p, i) => <polygon key={i} points={p.map(q => `${q[0]},${-q[1]}`).join(' ')} fill="rgba(250,183,4,.16)" stroke="#FAB704" strokeWidth={k * 1.2} strokeLinejoin="round" />)}
+        <line x1={m.x} y1={-m.y} x2={f[0]} y2={-f[1]} stroke="#fff" strokeWidth={k * 1.2} markerEnd="url(#fa)" />
+        <text x={f[0]} y={-f[1] - k * 3} fontSize={k * 7} fill="#fff" textAnchor="middle">frente</text>
+        <defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#fff" /></marker></defs>
+      </svg>
+      <span className="n">N ▲</span>
+      <span className="dims">{(x1 - x0).toFixed(1)} × {(y1 - y0).toFixed(1)} m</span>
+    </div>
+  );
+}
 
 /** Opciones avanzadas plegadas: lo esencial queda a la vista, el resto a un clic. */
 const More = ({ children, label = 'Más opciones' }: { children: ReactNode; label?: string }) => (
@@ -97,7 +133,7 @@ const STEP_INFO: Record<Tab,{ t: string; short: string; d: string }> = {
 
 // ---------- 1. Ubicación ----------
 function Sitio() {
-  const p = useStore(s => s.project), { setSite } = useStore.getState(), fecha = useStore(s => s.fecha);
+  const p = useStore(s => s.project), { setSite, set } = useStore.getState(), fecha = useStore(s => s.fecha), showSunPath = useStore(s => s.showSunPath);
   const { y } = parseFecha(fecha), inv = daySummary(p.site, y, 6, 21), ver = daySummary(p.site, y, 12, 21), sur = p.site.lat < 0;
   const [w, s] = sur ? [inv, ver] : [ver, inv];
   return (
@@ -116,7 +152,8 @@ function Sitio() {
         <div><span className="lbl">Invierno · 21 {sur ? 'jun' : 'dic'}</span><b>{w.horas.toFixed(1)} h de sol</b><span>sol máx. {w.maxEl.toFixed(0)}° · {w.sale !== null ? `${hhmm(w.sale)}–${hhmm(w.pone!)}` : '—'}</span></div>
         <div><span className="lbl">Verano · 21 {sur ? 'dic' : 'jun'}</span><b>{s.horas.toFixed(1)} h de sol</b><span>sol máx. {s.maxEl.toFixed(0)}° · {s.sale !== null ? `${hhmm(s.sale)}–${hhmm(s.pone!)}` : '—'}</span></div>
       </div>
-      <p className="note">Usa los botones <b>Ene … Dic</b> bajo el visor para ver cómo cambia el recorrido del sol durante el año.</p>
+      <label className="check"><input type="checkbox" checked={showSunPath} onChange={e => set({ showSunPath: e.target.checked })} /> Mostrar el recorrido del sol en el 3D</label>
+      <p className="note">Con el recorrido visible, usa los botones <b>Ene … Dic</b> bajo el visor para ver cómo cambia durante el año. También se activa o desactiva con el botón “Trayectoria solar”.</p>
       <More>
         <Row>
           <label>Zona horaria (UTC)<select value={p.site.tz} onChange={e => setSite({ tz: +e.target.value })}>{[-3, -4, -5, -6].map(t => <option key={t} value={t}>{t}</option>)}</select></label>
@@ -135,12 +172,25 @@ function Casa() {
       <label className="check"><input type="checkbox" checked={h.enabled} onChange={e => setHouse({ enabled: e.target.checked })} /> Hay una casa o edificio</label>
       {!h.enabled && <p className="note">Sin casa, los paneles van en el suelo o en un carport (paso siguiente).</p>}
       {h.enabled && <>
+        <H3>Forma</H3>
+        <div className="shapes">{SHAPES.map(([k, n, d]) => (
+          <button key={k} className={(h.forma ?? 'rect') === k ? 'on' : ''} onClick={() => setHouse({ forma: k })} title={n}>
+            <svg viewBox="0 0 24 24" aria-hidden><path d={d} /></svg><span>{n}</span></button>))}</div>
+        <PlanView h={h} />
         <H3>Medidas</H3>
         <Row cols={3}>
           <Num label="Ancho" unit="m" value={h.ancho} min={2} onChange={ancho => setHouse({ ancho })} />
           <Num label="Fondo" unit="m" value={h.fondo} min={2} onChange={fondo => setHouse({ fondo })} />
           <Num label="Pisos" value={h.pisos} step={1} min={1} max={30} onChange={pisos => setHouse({ pisos: Math.round(pisos) })} />
         </Row>
+        {(h.forma ?? 'rect') !== 'rect' && <>
+          <Row>
+            <Num label={h.forma === 'U' ? 'Ancho de cada ala' : 'Ancho del ala'} unit="m" value={h.alaAncho ?? 5} min={1} max={h.forma === 'U' ? h.ancho / 2 : h.ancho} onChange={alaAncho => setHouse({ alaAncho })} />
+            <Num label="Largo del ala" unit="m" value={h.alaLargo ?? 5} min={0.5} max={40} onChange={alaLargo => setHouse({ alaLargo })} />
+          </Row>
+          {h.forma === 'L' && <Seg value={String(h.alaLado ?? 1)} options={[['-1', 'Ala a la izquierda'], ['1', 'Ala a la derecha']]} onChange={v => setHouse({ alaLado: +v as 1 | -1 })} />}
+          <Seg value={String(h.alaSentido ?? 1)} options={[['1', 'Ala hacia atrás'], ['-1', 'Ala hacia el frente']]} onChange={v => setHouse({ alaSentido: +v as 1 | -1 })} />
+        </>}
         <H3>Techo</H3>
         <Seg value={h.techo} options={ROOF} onChange={techo => setHouse({ techo })} />
         {h.techo !== 'plano' && <label>Pendiente: <b className="am">{h.pendiente}°</b>

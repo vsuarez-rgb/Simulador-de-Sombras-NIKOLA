@@ -9,7 +9,15 @@ export interface House {
   ancho: number; fondo: number;  // ancho a lo largo del frente, fondo perpendicular
   pisos: number; altoPiso: number;
   techo: RoofType; pendiente: number; alero: number; parapeto: number;
+  /** Planta: rectangular o con alas (L, T, U). Las alas comparten pisos y tipo de techo. */
+  forma?: HouseShape;
+  alaAncho?: number;   // ancho del ala (m)
+  alaLargo?: number;   // cuánto sobresale el ala del cuerpo principal (m)
+  alaLado?: 1 | -1;    // L: ala a la derecha (1) o izquierda (-1) mirando el frente
+  alaSentido?: 1 | -1; // ala hacia atrás (1) o hacia adelante (-1)
 }
+export type HouseShape = 'rect' | 'L' | 'T' | 'U';
+export const HOUSE_SHAPE_DEFAULTS = { forma: 'rect' as HouseShape, alaAncho: 5, alaLargo: 5, alaLado: 1 as 1 | -1, alaSentido: 1 as 1 | -1 };
 export type Mount = 'coplanar' | 'inclinada';
 export type TiltRange = '10-15' | '15-30' | '30-60';
 export const TILT_RANGES: Record<TiltRange, [number, number]> = { '10-15': [10, 15], '15-30': [15, 30], '30-60': [30, 60] };
@@ -49,7 +57,7 @@ export const DEFAULT_ELEC: ElecConfig = {
 };
 /** Completa proyectos guardados con versiones anteriores. */
 export function migrate(p: Project): Project {
-  return { ...p, modulo: { ...DEFAULT_MODULE, ...p.modulo }, elec: { ...DEFAULT_ELEC, ...(p.elec ?? {}) }, clima: p.clima ?? null };
+  return { ...p, house: { ...HOUSE_SHAPE_DEFAULTS, ...p.house }, modulo: { ...DEFAULT_MODULE, ...p.modulo }, elec: { ...DEFAULT_ELEC, ...(p.elec ?? {}) }, clima: p.clima ?? null };
 }
 export const uid = () => Math.random().toString(36).slice(2, 8);
 
@@ -59,7 +67,7 @@ export function defaultProject(): Project {
     site: { nombre: 'Santiago', lat: -33.45, lon: -70.66, tz: -3, albedo: 0.2 },
     modulo: DEFAULT_MODULE,
     elec: DEFAULT_ELEC, clima: null,
-    house: { enabled: true, x: 0, y: 0, rot: 0, ancho: 12, fondo: 8, pisos: 2, altoPiso: 2.6, techo: 'dos_aguas', pendiente: 25, alero: 0.5, parapeto: 0.8 },
+    house: { enabled: true, x: 0, y: 0, rot: 0, ancho: 12, fondo: 8, pisos: 2, altoPiso: 2.6, techo: 'dos_aguas', pendiente: 25, alero: 0.5, parapeto: 0.8, ...HOUSE_SHAPE_DEFAULTS },
     fields: [
       { id: uid(), nombre: 'Techo norte', x: 0, y: 2.2, montaje: 'coplanar', rango: '10-15', tilt: 12, azim: 0, filas: 2, mods: 5, enAlto: 1, orient: 'V', pitch: 3, altura: 0.12 },
     ],
@@ -93,9 +101,27 @@ const halfDims = (h: House) => {
   const o = h.techo === 'plano' ? 0 : h.alero;
   return { Wh: h.ancho / 2 + o, Dh: h.fondo / 2 + o, o };
 };
-/** Altura del techo en un punto de planta; null si el punto no está sobre el techo. */
-export function roofHeightAt(h: House, x: number, yN: number): number | null {
-  if (!h.enabled) return null;
+/**
+ * La casa como bloques rectangulares: cuerpo principal + alas. Cada ala es un bloque girado 90°
+ * (su cumbrera corre a lo largo del ala) que nace en el centro del cuerpo, así los techos se
+ * intersectan solos (la unión de los bloques forma la limahoya de una L, T o U).
+ */
+export function houseBlocks(h: House): House[] {
+  if (!h.enabled) return [];
+  const main: House = { ...h, forma: 'rect' };
+  const forma = h.forma ?? 'rect';
+  if (forma === 'rect') return [main];
+  const a = Math.max(1, Math.min(h.alaAncho ?? 5, h.ancho)), l = Math.max(0.5, h.alaLargo ?? 5);
+  const sz = h.alaSentido ?? 1, D2 = h.fondo / 2, len = D2 + l, lz = sz * len / 2;
+  const xs = forma === 'T' ? [0] : forma === 'U' ? [-1, 1].map(s => s * (h.ancho / 2 - a / 2)) : [(h.alaLado ?? 1) * (h.ancho / 2 - a / 2)];
+  return [main, ...xs.map(lx => {
+    const w = toWorld(h, lx, 0, lz);
+    return { ...h, forma: 'rect' as HouseShape, x: w[0], y: -w[2], rot: (((h.rot + 90 * sz) % 360) + 360) % 360, ancho: len, fondo: a };
+  })];
+}
+
+/** Altura del techo de un bloque en un punto de planta; null si el punto no está sobre ese bloque. */
+function blockRoofHeight(h: House, x: number, yN: number): number | null {
   const { lx, lz } = toLocal(h, x, yN), { Wh, Dh, o } = halfDims(h);
   if (Math.abs(lx) > Wh || Math.abs(lz) > Dh) return null;
   const H = eaveHeight(h), tp = Math.tan(h.pendiente * D2R), H0 = H - o * tp;
@@ -106,9 +132,23 @@ export function roofHeightAt(h: House, x: number, yN: number): number | null {
     case 'cuatro_aguas': return H0 + Math.min(Dh - Math.abs(lz), Wh - Math.abs(lx)) * tp;
   }
 }
+/** Bloque cuyo techo es el más alto en el punto (la superficie visible de la unión). */
+function topBlock(h: House, x: number, yN: number): { b: House; y: number; i: number } | null {
+  let best: { b: House; y: number; i: number } | null = null;
+  houseBlocks(h).forEach((b, i) => { const y = blockRoofHeight(b, x, yN); if (y != null && (!best || y > best.y)) best = { b, y, i }; });
+  return best;
+}
+/** Altura del techo en un punto de planta; null si el punto no está sobre el techo. */
+export function roofHeightAt(h: House, x: number, yN: number): number | null {
+  return topBlock(h, x, yN)?.y ?? null;
+}
 /** Faldón del techo en un punto: inclinación y azimut de la superficie. */
-export function roofFaceAt(h: House, x: number, yN: number): { tilt: number; azim: number; nombre: string } | null {
-  if (roofHeightAt(h, x, yN) == null) return null;
+export function roofFaceAt(h0: House, x: number, yN: number): { tilt: number; azim: number; nombre: string } | null {
+  const t = topBlock(h0, x, yN); if (!t) return null;
+  const f = blockFace(t.b, x, yN);
+  return t.i === 0 ? f : { ...f, nombre: 'ala ' + t.i + ': ' + f.nombre };
+}
+function blockFace(h: House, x: number, yN: number): { tilt: number; azim: number; nombre: string } {
   const { lx, lz } = toLocal(h, x, yN), { Wh, Dh } = halfDims(h), az = (d: number) => ((h.rot + d) % 360 + 360) % 360;
   switch (h.techo) {
     case 'plano': return { tilt: 0, azim: h.rot, nombre: 'techo plano' };
@@ -121,9 +161,15 @@ export function roofFaceAt(h: House, x: number, yN: number): { tilt: number; azi
 }
 export const surfaceHeight = (p: Project, x: number, yN: number) => roofHeightAt(p.house, x, yN) ?? 0;
 
-/** Triángulos del techo (y muros piñón) + caja de muros. Se usan para el cálculo y para dibujar. */
+/** Triángulos del techo (y muros piñón) + cajas de muros de todos los bloques. Se usan para el cálculo y para dibujar. */
 export function housePrims(h: House): Prim[] {
-  if (!h.enabled) return [];
+  const blocks = houseBlocks(h);
+  return blocks.flatMap((b, i) => blockPrims(b, blocks.filter((_, j) => j !== i)));
+}
+/** ¿El punto de planta cae dentro de los muros de alguno de los bloques? */
+const insideAny = (bs: House[], x: number, yN: number) => bs.some(b => { const { lx, lz } = toLocal(b, x, yN); return Math.abs(lx) < b.ancho / 2 - 0.05 && Math.abs(lz) < b.fondo / 2 - 0.05; });
+
+function blockPrims(h: House, others: House[]): Prim[] {
   const H = eaveHeight(h), tp = Math.tan(h.pendiente * D2R), { Wh, Dh, o } = halfDims(h), H0 = H - o * tp;
   const W2 = h.ancho / 2, D2 = h.fondo / 2;
   const P = (lx: number, y: number, lz: number) => toWorld(h, lx, y, lz);
@@ -132,11 +178,18 @@ export function housePrims(h: House): Prim[] {
   const Q = (a: V3, b: V3, c: V3, d: V3, k = 'techo') => { T(a, b, c, k); T(a, c, d, k); };
   if (h.techo === 'plano') {
     if (h.parapeto > 0) {
+      // tramos de ~0,5 m; se omiten los que caen dentro de otro bloque (unión de alas)
       const t = 0.1, py = H + h.parapeto / 2, hy = h.parapeto / 2;
-      out.push(boxPrim(toWorld(h, 0, py, -(D2 - t)), [W2, hy, t], h.rot, 'parapeto'));
-      out.push(boxPrim(toWorld(h, 0, py, D2 - t), [W2, hy, t], h.rot, 'parapeto'));
-      out.push(boxPrim(toWorld(h, -(W2 - t), py, 0), [t, hy, D2], h.rot, 'parapeto'));
-      out.push(boxPrim(toWorld(h, W2 - t, py, 0), [t, hy, D2], h.rot, 'parapeto'));
+      const run = (len: number, at: (s: number) => [number, number], along: 'x' | 'z') => {
+        const n = Math.max(1, Math.round(len / 0.5)), seg = len / n;
+        for (let k = 0; k < n; k++) {
+          const s = -len / 2 + seg * (k + 0.5), [lx, lz] = at(s), w = toWorld(h, lx, 0, lz);
+          if (insideAny(others, w[0], -w[2])) continue;
+          out.push(boxPrim(toWorld(h, lx, py, lz), along === 'x' ? [seg / 2, hy, t] : [t, hy, seg / 2], h.rot, 'parapeto'));
+        }
+      };
+      run(2 * W2, s => [s, -(D2 - t)], 'x'); run(2 * W2, s => [s, D2 - t], 'x');
+      run(2 * D2, s => [-(W2 - t), s], 'z'); run(2 * D2, s => [W2 - t, s], 'z');
     }
   } else if (h.techo === 'una_agua') {
     const yb = H0 + 2 * Dh * tp, yw = H0 + (D2 + Dh) * tp; // cumbrera (con alero) y altura en muro trasero
@@ -258,7 +311,14 @@ export function obstaclePrims(p: Project, ob: Obstacle): Prim[] {
 // ---------- Distancias (planta) ----------
 /** Distancia horizontal borde a borde entre un obstáculo y los muros de la casa, con los puntos más cercanos. */
 export function distanceToHouse(p: Project, ob: Obstacle): { d: number; a: [number, number]; b: [number, number]; inside: boolean } | null {
-  const h = p.house; if (!h.enabled) return null;
+  let best: ReturnType<typeof blockDistance> = null;
+  for (const b of houseBlocks(p.house)) {
+    const r = blockDistance(b, ob);
+    if (r && (!best || (r.inside && !best.inside) || (!best.inside && r.d < best.d))) best = r;
+  }
+  return best;
+}
+function blockDistance(h: House, ob: Obstacle): { d: number; a: [number, number]; b: [number, number]; inside: boolean } | null {
   const { lx, lz } = toLocal(h, ob.x, ob.y), W2 = h.ancho / 2, D2 = h.fondo / 2;
   const cx = Math.max(-W2, Math.min(W2, lx)), cz = Math.max(-D2, Math.min(D2, lz));
   const inside = Math.abs(lx) <= W2 && Math.abs(lz) <= D2;

@@ -91,7 +91,7 @@ export const useStore = create<State>((set, get) => {
     project: load(),
     sel: null, tab: 'sitio', mode: 'instante',
     fecha: `${year}-06-21`, hora: 15, sub: 2, clima: 'despejado', tool: 'string', activeString: null,
-    showLabels: true, showDims: true, showSunPath: true, selModule: -1,
+    showLabels: true, showDims: true, showSunPath: (() => { try { return localStorage.getItem('nikola-sombras-sol') === '1'; } catch { return false; } })(), selModule: -1,
     hideSide: false, hideRes: false, intro: (() => { try { return !localStorage.getItem('nikola-sombras-intro'); } catch { return false; } })(), colorBy: 'celda', stale: false,
     day: null, yearRes: null, busy: null, error: null, pvgisCache: null,
     resetStorage: () => { clearTimeout(saveT); saveT = undefined; try { localStorage.removeItem(KEY); } catch { /* */ } },
@@ -170,6 +170,9 @@ export const useStore = create<State>((set, get) => {
     set: s => set(s as Partial<State>),
   };
 });
+
+// la preferencia de mostrar la trayectoria del sol se recuerda entre sesiones
+useStore.subscribe((s, prev) => { if (s.showSunPath !== prev.showSunPath) try { localStorage.setItem('nikola-sombras-sol', s.showSunPath ? '1' : '0'); } catch { /* */ } });
 
 /** Navegar a un paso: al entrar a Paneles se selecciona el primer campo si no hay uno elegido. */
 export function goStep(t: Tab) {

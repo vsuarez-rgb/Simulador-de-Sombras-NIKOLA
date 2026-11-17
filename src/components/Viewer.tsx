@@ -3,7 +3,7 @@ import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { Box, Module, Prim, Table } from '../engine/engine';
-import { distanceToHouse, housePrims, obstaclePrims, surfaceHeight } from '../engine/project';
+import { distanceToHouse, housePrims, obstaclePrims, surfaceHeight, type House } from '../engine/project';
 import { DESIGN_STEPS, useStore, type Sel, type Tab } from '../store';
 
 /** Selecciona un objeto; solo salta a su paso si se está diseñando (en Simular/Eléctrico se queda ahí). */
@@ -17,6 +17,8 @@ import { sunVector } from '../engine/engine';
 import { refDays, sunArc, sunHours } from '../sim/sunpath';
 
 const D2R = Math.PI / 180;
+/** Tamaño de la casa en planta incluidas las alas (para cámara y bóveda solar). */
+const houseSpan = (h: House) => Math.max(h.ancho, h.fondo) + (h.forma && h.forma !== 'rect' ? (h.alaLargo ?? 0) : 0);
 
 const v3 = (a: number[]) => new THREE.Vector3(a[0], a[1], a[2]);
 export type CamKind = '3d' | 'top' | 'sun';
@@ -86,11 +88,12 @@ function HouseMesh() {
       {prims.filter(p => p.type === 'box').map((p, i) => <PrimMesh key={i} p={p} selected={selected} onClick={click} />)}
       {roofTris.length > 0 && <TriMesh tris={roofTris} material={roofMat} onClick={click} />}
       {wallTris.length > 0 && <TriMesh tris={wallTris} material={MAT.muros} onClick={click} />}
-      {house.techo === 'plano' && (() => {
-        const b = prims[0] as Box;
-        return <mesh position={[b.c[0], b.h[1] * 2 + 0.01, b.c[2]]} rotation={[-Math.PI / 2, 0, b.rot * Math.PI / 180]} receiveShadow material={MAT.techoPlano} onClick={click}>
-          <planeGeometry args={[b.h[0] * 2, b.h[2] * 2]} /></mesh>;
-      })()}
+      {/* losa del techo plano de cada bloque: se gira igual que la caja de muros (−rot en Y) */}
+      {house.techo === 'plano' && prims.filter((p): p is Box => p.type === 'box' && p.kind === 'muros').map((b, i) => (
+        <group key={i} position={[b.c[0], b.h[1] * 2 + 0.01, b.c[2]]} rotation={[0, -b.rot * Math.PI / 180, 0]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow material={MAT.techoPlano} onClick={click}><planeGeometry args={[b.h[0] * 2, b.h[2] * 2]} /></mesh>
+        </group>
+      ))}
     </group>
   );
 }
@@ -214,7 +217,7 @@ function Obstacles() {
 function useDome() {
   const house = useStore(s => s.project.house);
   const c: [number, number, number] = house.enabled ? [house.x, 0, -house.y] : [0, 0, 0];
-  const R = Math.min(35, Math.max(15, Math.max(house.ancho, house.fondo) * 1.5));
+  const R = Math.min(35, Math.max(15, houseSpan(house) * 1.5));
   return { c, R };
 }
 type P3 = [number, number, number];
@@ -289,7 +292,7 @@ function CamRig() {
   useEffect(() => {
     camBus.fn = (k: CamKind) => {
       if (!controls) return;
-      const span = Math.max(house.ancho, house.fondo, 14), c = new THREE.Vector3(house.x, 2, -house.y);
+      const span = Math.max(houseSpan(house), 14), c = new THREE.Vector3(house.x, 2, -house.y);
       if (k === 'top') camera.position.set(c.x, span * 2.6, c.z + 0.001); // norte arriba
       else if (k === 'sun') { if (sun.el <= 0) return; camera.position.copy(v3(sun.vec).multiplyScalar(span * 2.4)).add(c); }
       else camera.position.set(c.x + span * 0.4, span * 3.6, c.z + span * 2.6); // desde el sur y en alto: Norte al fondo, se ven los paneles del faldón norte
