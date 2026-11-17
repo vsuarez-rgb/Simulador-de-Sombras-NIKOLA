@@ -235,7 +235,8 @@ function Obstacles() {
 function useDome() {
   const vs = useStore(s => s.project.volumes), bx = volumesBox(vs);
   const c: [number, number, number] = [bx.cx, 0, -bx.cy];
-  const R = Math.min(35, Math.max(15, bx.span * 1.5));
+  // bóveda amplia: deja espacio libre alrededor de la casa para diseñar sin que molesten los arcos
+  const R = Math.min(90, Math.max(40, bx.span * 3.5));
   return { c, R };
 }
 type P3 = [number, number, number];
@@ -276,7 +277,7 @@ function SunPath() {
         const pos = onDome(c, R, p.el, p.az);
         return (
           <group key={p.h}>
-            <mesh position={pos}><sphereGeometry args={[0.22, 12, 8]} /><meshBasicMaterial color="#FAB704" /></mesh>
+            <mesh position={pos}><sphereGeometry args={[0.22 * R / 18, 12, 8]} /><meshBasicMaterial color="#FAB704" /></mesh>
             {showLabels && <Html position={onDome(c, R * 1.07, p.el, p.az)} center style={{ pointerEvents: 'none' }} zIndexRange={[6, 0]}><div className="lab hora">{p.h}h</div></Html>}
           </group>
         );
@@ -297,7 +298,7 @@ function Sun() {
       <directionalLight ref={light} position={dir.clone().multiplyScalar(100)} intensity={above ? 0.6 + 2 * Math.sin(sun.el * Math.PI / 180) : 0}
         castShadow shadow-mapSize={[4096, 4096]} shadow-bias={-0.0004} shadow-normalBias={0.02}
         shadow-camera-left={-45} shadow-camera-right={45} shadow-camera-top={45} shadow-camera-bottom={-45} shadow-camera-far={400} />
-      {above && <mesh position={onDome(c, R, sun.el, sun.az)}><sphereGeometry args={[0.9, 24, 16]} /><meshBasicMaterial color="#FAB704" /></mesh>}
+      {above && <mesh position={onDome(c, R, sun.el, sun.az)}><sphereGeometry args={[0.9 * R / 18, 24, 16]} /><meshBasicMaterial color="#FAB704" /></mesh>}
       {showSunPath && <SunPath />}
     </>
   );
