@@ -19,6 +19,7 @@ interface State {
   sel: Sel; tab: Tab; mode: Mode;
   fecha: string; hora: number; sub: number; clima: Clima; tool: ElecTool; activeString: string | null;
   showLabels: boolean; showDims: boolean; selModule: number;
+  hideSide: boolean; hideRes: boolean;
   day: DayResult | null; yearRes: YearResult | null; busy: number | null; error: string | null;
   pvgisCache: { key: string; w: Weather } | null;
   setProject: (p: Project) => void;
@@ -55,6 +56,7 @@ export const useStore = create<State>((set, get) => {
     sel: null, tab: 'casa', mode: 'instante',
     fecha: `${year}-06-21`, hora: 15, sub: 2, clima: 'despejado', tool: 'string', activeString: null,
     showLabels: true, showDims: true, selModule: -1,
+    hideSide: false, hideRes: false,
     day: null, yearRes: null, busy: null, error: null, pvgisCache: null,
     setProject: p => { touch(migrate(p)); set({ sel: null, selModule: -1 }); },
     setSite: s => touch({ ...get().project, site: { ...get().project.site, ...s } }),

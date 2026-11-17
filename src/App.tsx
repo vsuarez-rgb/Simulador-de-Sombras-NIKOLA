@@ -42,6 +42,16 @@ function Legend() {
 
 function ViewButtons() {
   const showLabels = useStore(s => s.showLabels), showDims = useStore(s => s.showDims), set = useStore(s => s.set);
+  const hideSide = useStore(s => s.hideSide), hideRes = useStore(s => s.hideRes), full = hideSide && hideRes;
+  // Esc sale de la pantalla completa 3D (si el foco no está en un campo de texto)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== 'Escape' || t?.closest('input,select,textarea')) return;
+      const s = useStore.getState(); if (s.hideSide && s.hideRes) s.set({ hideSide: false, hideRes: false });
+    };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, []);
   return (
     <div className="ov viewbtns">
       <button onClick={() => camBus.fn('3d')}>Vista 3D</button>
@@ -49,6 +59,10 @@ function ViewButtons() {
       <button onClick={() => camBus.fn('sun')}>Desde el sol</button>
       <button className={showLabels ? 'on' : ''} onClick={() => set({ showLabels: !showLabels })}>Etiquetas</button>
       <button className={showDims ? 'on' : ''} onClick={() => set({ showDims: !showDims })}>Cotas</button>
+      <span className="sep" />
+      <button className={hideSide ? 'on' : ''} onClick={() => set({ hideSide: !hideSide })} title="Colapsa la barra lateral; el visor 3D ocupa su espacio">{hideSide ? 'Mostrar panel lateral' : 'Ocultar panel lateral'}</button>
+      <button className={hideRes ? 'on' : ''} onClick={() => set({ hideRes: !hideRes })} title="Colapsa el panel de resultados">{hideRes ? 'Mostrar resultados' : 'Ocultar resultados'}</button>
+      <button className={full ? 'on' : ''} onClick={() => set({ hideSide: !full, hideRes: !full })} title="Oculta ambos paneles (Esc para salir)">{full ? 'Salir de pantalla completa' : 'Pantalla completa 3D'}</button>
     </div>
   );
 }
@@ -86,12 +100,13 @@ function Header() {
 
 export default function App() {
   const sim = useSimState();
+  const hideSide = useStore(s => s.hideSide), hideRes = useStore(s => s.hideRes);
   return (
     <SimContext.Provider value={sim}>
       <Header />
-      <div className="app">
+      <div className={'app' + (hideSide ? ' noside' : '')}>
         <Sidebar />
-        <main>
+        <main className={hideRes ? 'nores' : ''}>
           <div className="view">
             <Viewer />
             <ViewButtons /><SunInfo /><TimeBar /><Legend />
