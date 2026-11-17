@@ -116,7 +116,7 @@ function Detail() {
 
 export default function Results() {
   const { lay, fdiff, es } = useSim();
-  const mode = useStore(s => s.mode), set = useStore(s => s.set), busy = useStore(s => s.busy), error = useStore(s => s.error);
+  const mode = useStore(s => s.mode), set = useStore(s => s.set), busy = useStore(s => s.busy), error = useStore(s => s.error), stale = useStore(s => s.stale);
   const selModule = useStore(s => s.selModule), clima = useStore(s => s.clima), hasFile = useStore(s => !!s.project.clima), yearRes = useStore(s => s.yearRes), day = useStore(s => s.day);
   const { rows, have } = useRows();
   const [sort, setSort] = useState<{ k: keyof RowT; d: number } | null>(null);
@@ -129,14 +129,20 @@ export default function Results() {
     const s = useStore.getState(), site = s.project.site;
     return { sp: { lat: site.lat, lon: site.lon, tz: site.tz, albedo: site.albedo, sub: s.sub }, ...parseFecha(s.fecha) };
   };
+  // Al terminar, el visor pasa solo al mapa de color del análisis. Si la geometría cambió mientras se
+  // calculaba, el resultado nace desactualizado; el otro análisis, si estaba desactualizado, se descarta.
+  const done = (patch: { day: DayResult } | { yearRes: YearResult }, mode: Mode, p0: unknown) => {
+    const st = useStore.getState(), other = mode === 'dia' ? { yearRes: null } : { day: null };
+    set({ ...patch, ...(st.stale ? other : {}), mode, stale: st.project !== p0 });
+  };
   const analyzeDay = async () => {
-    const { sp, y, m, d } = params();
+    const { sp, y, m, d } = params(), p0 = useStore.getState().project;
     set({ busy: 0.3, error: null });
-    try { const res = await runWorker({ job: 'dia', lay, fdiff, sp, es, y, m, d }, f => set({ busy: f })); set({ day: res as DayResult, mode: 'dia' }); }
+    try { const res = await runWorker({ job: 'dia', lay, fdiff, sp, es, y, m, d }, f => set({ busy: f })); done({ day: res as DayResult }, 'dia', p0); }
     catch (e) { set({ error: String((e as Error).message) }); } finally { set({ busy: null }); }
   };
   const analyzeYear = async () => {
-    const { sp, y } = params(), st = useStore.getState();
+    const { sp, y } = params(), st = useStore.getState(), p0 = st.project;
     set({ busy: 0.02, error: null });
     try {
       let clima: Weather | null = null;
@@ -149,7 +155,7 @@ export default function Results() {
         set({ pvgisCache: { key, w: clima } });
       }
       const res = await runWorker({ job: 'anio', lay, fdiff, sp, es, y, clima }, f => set({ busy: f }));
-      set({ yearRes: res as YearResult, mode: 'anio' });
+      done({ yearRes: res as YearResult }, 'anio', p0);
     } catch (e) { set({ error: String((e as Error).message) }); } finally { set({ busy: null }); }
   };
 
@@ -182,6 +188,7 @@ export default function Results() {
         {busy != null && <div className="prog"><div style={{ width: `${Math.round(busy * 100)}%` }} /></div>}
         {error && <div className="warn">⚠ {error}</div>}
         {!have && <div className="stale">Presiona “Analizar {mode === 'dia' ? 'día' : 'año'}” para calcular.</div>}
+        {have && stale && mode !== 'instante' && <div className="warn">⚠ Resultados desactualizados: la geometría o la configuración cambió desde el último análisis. Vuelve a analizar el {mode === 'dia' ? 'día' : 'año'}.</div>}
         <div className="kpis">{kpis.map(([k, v, s]) => <div className="kpi" key={k}><div className="k">{k}</div><div className="v">{v}</div><div className="s">{s}</div></div>)}</div>
         {have && <table>
           <thead><tr>{COLS[mode].map((c, j) => {

@@ -6,6 +6,7 @@ export type Sel = { kind: 'house' } | { kind: 'field'; id: string } | { kind: 'o
 export type Mode = 'instante' | 'dia' | 'anio';
 export type Tab = 'sitio' | 'casa' | 'paneles' | 'objetos' | 'electrico';
 export type Clima = 'despejado' | 'archivo' | 'pvgis';
+export type ColorBy = 'celda' | 'panel';
 
 const KEY = 'nikola-sombras-v2';
 function load(): Project {
@@ -22,10 +23,15 @@ interface State {
   hideSide: boolean; hideRes: boolean;
   /** Objeto que se está arrastrando en el visor (para cotas y tooltip en vivo). */
   dragging: Sel;
+  /** Mapa de calor de Día/Año: detalle por celda o un color por panel (pérdida eléctrica). */
+  colorBy: ColorBy;
+  /** Los resultados de Día/Año ya no corresponden a la geometría/configuración actual. */
+  stale: boolean;
   day: DayResult | null; yearRes: YearResult | null; busy: number | null; error: string | null;
   pvgisCache: { key: string; w: Weather } | null;
   resetStorage: () => void;
   setProject: (p: Project) => void;
+  setNombre: (nombre: string) => void;
   setSite: (s: Partial<Site>) => void;
   setModulo: (m: Partial<ModuleSpec>) => void;
   setElec: (e: Partial<ElecConfig>) => void;
@@ -55,19 +61,24 @@ export const useStore = create<State>((set, get) => {
   let saveT: ReturnType<typeof setTimeout> | undefined;
   const save = () => { clearTimeout(saveT); saveT = undefined; try { localStorage.setItem(KEY, JSON.stringify(get().project)); } catch { /* */ } };
   if (typeof window !== 'undefined') window.addEventListener('beforeunload', () => { if (saveT) save(); });
-  const touch = (project: Project) => {
+  // Los resultados de Día/Año se conservan (y el visor mantiene su mapa de color) hasta que se vuelva
+  // a analizar; si la geometría o la configuración cambia quedan marcados como desactualizados.
+  const touch = (project: Project, clear = false) => {
     clearTimeout(saveT); saveT = setTimeout(save, 400);
-    set({ project, day: null, yearRes: null });
+    const st = get();
+    if (clear) set({ project, day: null, yearRes: null, stale: false });
+    else set({ project, stale: st.stale || !!(st.day || st.yearRes) });
   };
   return {
     project: load(),
     sel: null, tab: 'casa', mode: 'instante',
     fecha: `${year}-06-21`, hora: 15, sub: 2, clima: 'despejado', tool: 'string', activeString: null,
     showLabels: true, showDims: true, selModule: -1,
-    hideSide: false, hideRes: false, dragging: null,
+    hideSide: false, hideRes: false, dragging: null, colorBy: 'celda', stale: false,
     day: null, yearRes: null, busy: null, error: null, pvgisCache: null,
     resetStorage: () => { clearTimeout(saveT); saveT = undefined; try { localStorage.removeItem(KEY); } catch { /* */ } },
-    setProject: p => { touch(migrate(p)); set({ sel: null, selModule: -1 }); },
+    setProject: p => { touch(migrate(p), true); set({ sel: null, selModule: -1 }); },
+    setNombre: nombre => { clearTimeout(saveT); saveT = setTimeout(save, 400); set({ project: { ...get().project, nombre } }); },
     setSite: s => touch({ ...get().project, site: { ...get().project.site, ...s } }),
     setModulo: m => touch({ ...get().project, modulo: { ...get().project.modulo, ...m } }),
     setElec: e => touch({ ...get().project, elec: { ...get().project.elec, ...e } }),

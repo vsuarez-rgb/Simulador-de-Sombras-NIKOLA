@@ -13,13 +13,14 @@ export function heat(t: number) {
 export const pct = (x: number | undefined) => `${(100 * (x ?? 0)).toFixed(1)}%`;
 
 export const PX = 16;
-/** Dibuja el módulo en un canvas: celdas sombreadas (instante) o mapa de calor (día/año). */
-export function drawModule(cv: HTMLCanvasElement, m: Module, cells: ArrayLike<number> | null, heatMode: boolean, night: boolean, selected: boolean) {
+/** Dibuja el módulo en un canvas: celdas sombreadas (instante) o mapa de calor (día/año).
+ *  Con `panel` definido (modo "Color por: Panel") todo el módulo toma el color de ese valor. */
+export function drawModule(cv: HTMLCanvasElement, m: Module, cells: ArrayLike<number> | null, heatMode: boolean, night: boolean, selected: boolean, panel?: number) {
   const g = cv.getContext('2d')!;
   for (let iv = 0; iv < m.nv; iv++) for (let iu = 0; iu < m.nu; iu++) {
     const v = cells ? cells[iv * m.nu + iu] : 0;
     let col: string;
-    if (heatMode) col = heat(v);
+    if (heatMode) col = heat(panel ?? v);
     else if (night) col = '#16293a';
     else col = `rgb(${Math.round(58 - 50 * v)},${Math.round(120 - 105 * v)},${Math.round(176 - 156 * v)})`;
     g.fillStyle = col;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Logo from './components/Logo';
 import Results, { rowsToCsv, useRows } from './components/Results';
 import Sidebar from './components/Sidebar';
+import { Seg } from './components/ui';
 import Viewer, { camBus } from './components/Viewer';
 import type { Project } from './engine/project';
 import { SimContext, useSim, useSimState } from './sim/useSim';
@@ -34,10 +35,20 @@ function TimeBar() {
 }
 
 function Legend() {
-  const mode = useStore(s => s.mode);
-  return mode === 'instante'
-    ? <div className="ov legend"><div>Celdas sombreadas en este instante</div><div className="bar inst" /><div className="ticks"><span>Iluminada</span><span>Sombreada</span></div></div>
-    : <div className="ov legend"><div>Sombra directa por celda ({mode === 'dia' ? 'día' : 'año'})</div><div className="bar" /><div className="ticks"><span>0%</span><span>10%</span><span>20%</span><span>≥30%</span></div></div>;
+  const mode = useStore(s => s.mode), colorBy = useStore(s => s.colorBy), set = useStore(s => s.set);
+  const stale = useStore(s => s.stale && !!(s.mode === 'dia' ? s.day : s.mode === 'anio' ? s.yearRes : null));
+  if (mode === 'instante') return <div className="ov legend"><div>Celdas sombreadas en este instante</div><div className="bar inst" /><div className="ticks"><span>Iluminada</span><span>Sombreada</span></div></div>;
+  const per = mode === 'dia' ? 'día' : 'año';
+  return (
+    <>
+      {stale && <div className="ov stalebadge">⚠ Resultados desactualizados: la geometría o la configuración cambió. Vuelve a analizar el {per}.</div>}
+      <div className="ov legend">
+        <div className="colorby"><span>Color por:</span><Seg value={colorBy} options={[['celda', 'Celda'], ['panel', 'Panel']]} onChange={v => set({ colorBy: v })} /></div>
+        <div>{colorBy === 'panel' ? `Pérdida eléctrica por panel (${per})` : `Sombra directa por celda (${per})`}</div>
+        <div className="bar" /><div className="ticks"><span>0%</span><span>10%</span><span>20%</span><span>≥30%</span></div>
+      </div>
+    </>
+  );
 }
 
 function ViewButtons() {
@@ -68,7 +79,7 @@ function ViewButtons() {
 }
 
 function Header() {
-  const project = useStore(s => s.project), { setProject } = useStore.getState(), mode = useStore(s => s.mode);
+  const project = useStore(s => s.project), { setProject, setNombre } = useStore.getState(), mode = useStore(s => s.mode);
   const { rows } = useRows();
   const file = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState('');
@@ -81,7 +92,7 @@ function Header() {
     <header>
       <Logo />
       <div className="ttl"><div className="lbl">SIMULADOR DE SOMBRAS FV · v0.3</div>
-        <input className="pname" value={project.nombre} onChange={e => setProject({ ...project, nombre: e.target.value })} /></div>
+        <input className="pname" value={project.nombre} onChange={e => setNombre(e.target.value)} /></div>
       <div className="sp" />
       {msg && <span className="flash">{msg}</span>}
       <button className="btn sec sm" onClick={() => file.current?.click()}>Abrir</button>

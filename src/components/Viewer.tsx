@@ -90,7 +90,8 @@ function HouseMesh() {
 
 // ---------- módulos ----------
 function ModuleMesh({ m, t, idx }: { m: Module; t: Table; idx: number }) {
-  const { instant, rs } = useSim();
+  const { instant, rs, lay } = useSim(), nMods = lay.modules.length;
+  const colorBy = useStore(s => s.colorBy);
   const elecView = useStore(s => s.tab === 'electrico'), clickElec = useStore(s => s.clickModuleElec);
   const sIdx = rs.stringOf[idx], isOpt = rs.optimized.includes(idx), isEx = rs.excluded.includes(idx);
   const mode = useStore(s => s.mode), day = useStore(s => s.day), yearRes = useStore(s => s.yearRes);
@@ -107,14 +108,18 @@ function ModuleMesh({ m, t, idx }: { m: Module; t: Table; idx: number }) {
   }, [m, t]);
   useEffect(() => () => { tex.dispose(); geo.dispose(); }, [tex, geo]);
   const R = mode === 'dia' ? day : mode === 'anio' ? yearRes : null;
-  const heatMode = mode !== 'instante' && !!R;
+  // si cambió la cantidad de módulos los resultados ya no se pueden asociar a cada módulo
+  const heatMode = mode !== 'instante' && !!R && R.mods.length === nMods;
   const cells = heatMode ? R!.mods[idx]?.cell : instant?.[idx]?.cells ?? null;
+  const panel = heatMode && colorBy === 'panel' ? R!.mods[idx]?.perdElec : undefined;
   useEffect(() => {
     if (elecView) drawModuleElec(cv, m, sIdx, isOpt, isEx, idx === selModule);
-    else drawModule(cv, m, cells, heatMode, !instant && !heatMode, idx === selModule);
+    else drawModule(cv, m, cells, heatMode, !instant && !heatMode, idx === selModule, panel);
     tex.needsUpdate = true;
-  }, [cv, tex, m, cells, heatMode, instant, idx, selModule, elecView, sIdx, isOpt, isEx]);
+  }, [cv, tex, m, cells, heatMode, instant, idx, selModule, elecView, sIdx, isOpt, isEx, panel]);
   const metric = heatMode ? R!.mods[idx]?.perdElec : instant ? instant[idx].geom : undefined;
+  // En Día/Año el color es un dato: material sin iluminación ni tone mapping para que sea fiel a la leyenda
+  const flat = heatMode && !elecView;
   return (
     <>
       <mesh geometry={geo} castShadow onClick={e => {
@@ -122,7 +127,9 @@ function ModuleMesh({ m, t, idx }: { m: Module; t: Table; idx: number }) {
         if (elecView) { clickElec(m.key); set({ selModule: idx }); return; }
         set({ selModule: idx, sel: { kind: 'field', id: fieldId }, tab: 'paneles' });
       }} onPointerDown={elecView || !fieldId ? undefined : dragStart({ kind: 'field', id: fieldId })}>
-        <meshStandardMaterial map={tex} roughness={0.35} metalness={0.1} side={THREE.DoubleSide} />
+        {flat
+          ? <meshBasicMaterial key="flat" map={tex} toneMapped={false} side={THREE.DoubleSide} />
+          : <meshStandardMaterial key="lit" map={tex} roughness={0.35} metalness={0.1} side={THREE.DoubleSide} />}
       </mesh>
       {showLabels && (
         <Html position={center.clone().addScaledVector(v3(t.n), 0.15)} center style={{ pointerEvents: 'none' }} zIndexRange={[10, 0]}>

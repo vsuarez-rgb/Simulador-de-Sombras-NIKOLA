@@ -65,6 +65,10 @@ main.nores>.res{display:none}
 .suninfo{top:8px;right:8px;background:rgba(8,37,55,.85);border-radius:8px;padding:6px 10px;flex-direction:column;gap:1px;font-size:11px}
 .suninfo b{color:var(--am);font-family:var(--tit)}
 .legend{bottom:8px;right:8px;background:rgba(8,37,55,.85);border-radius:8px;padding:6px 10px;flex-direction:column;gap:3px;font-size:10px;min-width:200px}
+.legend .colorby{display:flex;align-items:center;gap:6px}
+.legend .colorby .seg{margin:0;flex:1}
+.legend .colorby .seg button{padding:2px 6px}
+.stalebadge{top:44px;left:50%;transform:translateX(-50%);max-width:calc(100% - 20px);background:rgba(8,37,55,.92);border:1px solid var(--am);color:var(--am2);border-radius:8px;padding:5px 10px;font-size:10px;text-align:center}
 .legend .bar{height:10px;border-radius:5px;background:linear-gradient(90deg,#2FA35A,#FAB704 33%,#D2402E)}
 .legend .bar.inst{background:linear-gradient(90deg,rgb(58,120,176),rgb(8,15,20))}
 .legend .ticks{display:flex;justify-content:space-between;color:#c9d4dc}
