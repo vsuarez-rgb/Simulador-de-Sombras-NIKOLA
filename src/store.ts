@@ -24,6 +24,8 @@ interface State {
   fecha: string; hora: number; sub: number; clima: Clima; tool: ElecTool; activeString: string | null;
   showLabels: boolean; showDims: boolean; showSunPath: boolean; selModule: number;
   hideSide: boolean; hideRes: boolean;
+  /** Pantalla de bienvenida (se muestra la primera vez). */
+  intro: boolean;
   /** Mapa de calor de Día/Año: detalle por celda o un color por panel (pérdida eléctrica). */
   colorBy: ColorBy;
   /** Los resultados de Día/Año ya no corresponden a la geometría/configuración actual. */
@@ -90,7 +92,7 @@ export const useStore = create<State>((set, get) => {
     sel: null, tab: 'sitio', mode: 'instante',
     fecha: `${year}-06-21`, hora: 15, sub: 2, clima: 'despejado', tool: 'string', activeString: null,
     showLabels: true, showDims: true, showSunPath: true, selModule: -1,
-    hideSide: false, hideRes: false, colorBy: 'celda', stale: false,
+    hideSide: false, hideRes: false, intro: (() => { try { return !localStorage.getItem('nikola-sombras-intro'); } catch { return false; } })(), colorBy: 'celda', stale: false,
     day: null, yearRes: null, busy: null, error: null, pvgisCache: null,
     resetStorage: () => { clearTimeout(saveT); saveT = undefined; try { localStorage.removeItem(KEY); } catch { /* */ } },
     setProject: p => { touch(migrate(p), true); set({ sel: null, selModule: -1 }); },

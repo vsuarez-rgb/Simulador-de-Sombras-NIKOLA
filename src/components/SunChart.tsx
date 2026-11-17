@@ -54,7 +54,7 @@ export default function SunChart({ height = 170 }: { height?: number }) {
     const xr = (az: number) => { const a = sur ? -(((az + 180) % 360 + 360) % 360 - 180) : ((az % 360) + 360) % 360 - 180; return a; };
     const X = (az: number) => L + ((xr(az) + 180) / 360) * pw, Y = (el: number) => T + ph - (el / 90) * ph;
     // cuadrícula
-    g.font = '9px Montserrat, Arial'; g.strokeStyle = '#1d4560'; g.lineWidth = 1; g.fillStyle = '#9fb0bd';
+    g.font = '9px Montserrat, Arial'; g.strokeStyle = 'rgba(105,128,144,.38)'; g.lineWidth = 1; g.fillStyle = 'rgba(255,255,255,.62)';
     for (let e = 0; e <= 90; e += 15) { const yy = Math.round(Y(e)) + 0.5; g.beginPath(); g.moveTo(L, yy); g.lineTo(L + pw, yy); g.stroke(); g.textAlign = 'right'; g.fillText(e + '°', L - 4, yy + 3); }
     const card: [number, string][] = sur ? [[90, 'E'], [45, 'NE'], [0, 'N'], [315, 'NO'], [270, 'O'], [180, 'S']] : [[90, 'E'], [135, 'SE'], [180, 'S'], [225, 'SO'], [270, 'O'], [0, 'N']];
     g.textAlign = 'center';
@@ -90,7 +90,7 @@ export default function SunChart({ height = 170 }: { height?: number }) {
       path(c);
     });
     // etiquetas de meses en el borde izquierdo de cada curva
-    g.textAlign = 'left'; g.fillStyle = '#c9d4dc';
+    g.textAlign = 'left'; g.fillStyle = 'rgba(255,255,255,.82)';
     for (const [i, n] of [[5, 'jun'], [4, 'may/jul'], [3, 'abr/ago'], [2, 'mar/sep'], [1, 'feb/oct'], [0, 'ene/nov'], [11, 'dic']] as [number, string][]) {
       const c = curves[i], top = c.reduce<SunPt | null>((b, p) => (!b || p.el > b.el ? p : b), null);
       if (top) g.fillText(n, X(top.az) + 4, Y(top.el) + 3);

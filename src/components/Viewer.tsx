@@ -292,7 +292,7 @@ function CamRig() {
       const span = Math.max(house.ancho, house.fondo, 14), c = new THREE.Vector3(house.x, 2, -house.y);
       if (k === 'top') camera.position.set(c.x, span * 2.6, c.z + 0.001); // norte arriba
       else if (k === 'sun') { if (sun.el <= 0) return; camera.position.copy(v3(sun.vec).multiplyScalar(span * 2.4)).add(c); }
-      else camera.position.set(c.x - span * 0.7, span * 2.5, c.z - span * 2.4); // desde el norte (paneles mirando al norte)
+      else camera.position.set(c.x + span * 0.4, span * 3.6, c.z + span * 2.6); // desde el sur y en alto: Norte al fondo, se ven los paneles del faldón norte
       controls.target.copy(c); controls.update();
     };
   }, [camera, controls, house, sun]);

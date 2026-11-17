@@ -7,7 +7,7 @@ import Viewer, { camBus } from './components/Viewer';
 import type { Project } from './engine/project';
 import { daySummary, hhmm, MESES } from './sim/sunpath';
 import { parseFecha, SimContext, useSim, useSimState } from './sim/useSim';
-import { useStore } from './store';
+import { goStep, useStore } from './store';
 
 function SunInfo() {
   const { sun } = useSim();
@@ -89,6 +89,38 @@ function ViewButtons() {
   );
 }
 
+const PASOS: [string, string][] = [
+  ['Lugar', 'Elige la ciudad: el recorrido del sol depende de dónde estás.'],
+  ['Casa', 'Medidas, techo y hacia dónde mira el frente.'],
+  ['Paneles', 'Cuántas filas y módulos, y cómo van montados.'],
+  ['Sombras', 'Árboles, edificios y postes que pueden tapar el sol.'],
+  ['Simular', 'Calcula la pérdida de energía por sombra en el año.'],
+  ['Eléctrico', 'Strings y optimizadores para recuperar energía.'],
+];
+function Welcome() {
+  const intro = useStore(s => s.intro), set = useStore(s => s.set);
+  if (!intro) return null;
+  const close = (start: boolean) => {
+    try { localStorage.setItem('nikola-sombras-intro', '1'); } catch { /* */ }
+    set({ intro: false }); if (start) goStep('sitio');
+  };
+  return (
+    <div className="modal" onClick={() => close(false)}>
+      <div className="modalbox welcome" onClick={e => e.stopPropagation()}>
+        <Logo />
+        <div className="lbl">Bienvenida</div>
+        <h1>Simulador de sombras FV</h1>
+        <p className="lead">Diseña la instalación en 6 pasos y descubre cuánta energía pierden los paneles por sombras durante el año. Puedes avanzar con “Siguiente” o saltar a cualquier paso.</p>
+        <ol className="pasos">{PASOS.map(([t, d], i) => <li key={t}><span>{i + 1}</span><div><b>{t}</b>{d}</div></li>)}</ol>
+        <div className="acts">
+          <button className="btn pri" onClick={() => close(true)}>Comenzar</button>
+          <button className="btn sec" onClick={() => close(false)}>Explorar el ejemplo</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Header() {
   const project = useStore(s => s.project), { setProject, setNombre } = useStore.getState(), mode = useStore(s => s.mode);
   const { rows } = useRows();
@@ -106,6 +138,7 @@ function Header() {
         <input className="pname" value={project.nombre} onChange={e => setNombre(e.target.value)} /></div>
       <div className="sp" />
       {msg && <span className="flash">{msg}</span>}
+      <button className="btn ter sm" onClick={() => useStore.getState().set({ intro: true })} title="Ver cómo funciona el simulador">¿Cómo funciona?</button>
       <button className="btn sec sm" onClick={() => file.current?.click()}>Abrir</button>
       <button className="btn sec sm" onClick={() => download(`${safe}.sombras.json`, JSON.stringify(project, null, 2), 'application/json')}>Guardar</button>
       <button className="btn sec sm" onClick={() => download(`${safe}-${mode}.csv`, rowsToCsv(mode, rows), 'text/csv')}>Exportar CSV</button>
@@ -126,6 +159,7 @@ export default function App() {
   return (
     <SimContext.Provider value={sim}>
       <Header />
+      <Welcome />
       <div className={'app' + (hideSide ? ' noside' : '')}>
         <Sidebar />
         <main className={hideRes ? 'nores' : ''}>

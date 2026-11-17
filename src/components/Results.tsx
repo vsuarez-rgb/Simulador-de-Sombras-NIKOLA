@@ -51,23 +51,23 @@ function Chart() {
     } else if (day) {
       xs = day.prof.map(p => p.h);
       series = [{ n: 'Sombra directa', c: '#698090', v: day.prof.map(p => p.sombra) }, { n: 'Pérdida por módulo', c: '#F5CC5A', v: day.prof.map(p => p.perdElec) }, { n: 'Pérdida string', c: '#D2402E', v: day.prof.map(p => p.perdString) }];
-    } else { g.fillStyle = '#9fb0bd'; g.fillText('Ejecuta “Analizar día” o “Analizar año” para ver gráficos.', L, h / 2); return; }
+    } else { g.fillStyle = 'rgba(255,255,255,.62)'; g.fillText('Simula el día o el año (paso 5) para ver los gráficos.', L, h / 2); return; }
     const ymax = Math.max(0.05, ...series.flatMap(s => s.v)) * 1.1, nice = [0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1].find(x => x >= ymax) ?? 1;
-    g.strokeStyle = '#1d4560';
+    g.strokeStyle = 'rgba(105,128,144,.38)';
     for (let i = 0; i <= 4; i++) {
       const y = T + ph - (ph * i) / 4; g.beginPath(); g.moveTo(L, y + 0.5); g.lineTo(L + pw, y + 0.5); g.stroke();
-      g.fillStyle = '#9fb0bd'; g.textAlign = 'right'; g.fillText(Math.round((100 * nice * i) / 4) + '%', L - 6, y + 4);
+      g.fillStyle = 'rgba(255,255,255,.62)'; g.textAlign = 'right'; g.fillText(Math.round((100 * nice * i) / 4) + '%', L - 6, y + 4);
     }
     g.textAlign = 'center';
     if (bars) {
       const bw = pw / 12;
       xs.forEach((x, i) => {
-        g.fillStyle = '#9fb0bd'; g.fillText(String(x), L + bw * (i + 0.5), T + ph + 16);
+        g.fillStyle = 'rgba(255,255,255,.62)'; g.fillText(String(x), L + bw * (i + 0.5), T + ph + 16);
         series.forEach((s, j) => { const bh = (ph * s.v[i]) / nice; g.fillStyle = s.c; g.fillRect(L + bw * i + bw * 0.1 + j * bw * 0.27, T + ph - bh, bw * 0.25, bh); });
       });
     } else {
       const nx = xs as number[], x0 = Math.floor(nx[0]), x1 = Math.ceil(nx[nx.length - 1]), X = (hr: number) => L + (pw * (hr - x0)) / Math.max(1, x1 - x0);
-      for (let hr = x0; hr <= x1; hr += 2) { g.fillStyle = '#9fb0bd'; g.fillText(hr + 'h', X(hr), T + ph + 16); }
+      for (let hr = x0; hr <= x1; hr += 2) { g.fillStyle = 'rgba(255,255,255,.62)'; g.fillText(hr + 'h', X(hr), T + ph + 16); }
       series.forEach(s => { g.strokeStyle = s.c; g.lineWidth = 2; g.beginPath(); s.v.forEach((v, i) => { const x = X(nx[i]), y = T + ph - (ph * v) / nice; if (i) g.lineTo(x, y); else g.moveTo(x, y); }); g.stroke(); });
       if (hora >= x0 && hora <= x1) { g.strokeStyle = 'rgba(255,255,255,.5)'; g.setLineDash([3, 3]); g.beginPath(); g.moveTo(X(hora), T); g.lineTo(X(hora), T + ph); g.stroke(); g.setLineDash([]); }
     }

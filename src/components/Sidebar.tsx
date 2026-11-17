@@ -15,7 +15,14 @@ const CIUDADES: [string, number, number][] = [
   ['Puerto Montt', -41.47, -72.94], ['Punta Arenas', -53.16, -70.92],
 ];
 const OBS_LBL: Record<ObsType, string> = { arbol: 'Árbol', poste: 'Poste', edificio: 'Edificio vecino', muro: 'Muro', chimenea: 'Chimenea / ducto' };
-const OBS_ICON: Record<ObsType, string> = { arbol: '🌳', poste: '│', edificio: '🏢', muro: '▭', chimenea: '▮' };
+const ico = (d: ReactNode) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>{d}</svg>;
+const OBS_ICON: Record<ObsType, ReactNode> = {
+  arbol: ico(<><circle cx="12" cy="9" r="6" /><path d="M12 15v7M9 22h6" /></>),
+  poste: ico(<><path d="M12 2v20M7 5h10M8 22h8" /></>),
+  edificio: ico(<><rect x="5" y="3" width="14" height="19" rx="1" /><path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2M11 22v-3h2v3" /></>),
+  muro: ico(<><rect x="2" y="8" width="20" height="10" rx="1" /><path d="M2 13h20M8 8v5M16 8v5M12 13v5" /></>),
+  chimenea: ico(<><path d="M3 21l9-8 9 8" /><rect x="14" y="7" width="4" height="9" /><path d="M15 4c0 1 1 1 1 2" /></>),
+};
 const ROOF: [RoofType, string][] = [['plano', 'Plano'], ['una_agua', '1 agua'], ['dos_aguas', '2 aguas'], ['cuatro_aguas', '4 aguas']];
 
 /** Nombre del punto cardinal más cercano a un azimut (0 = Norte, sentido horario). */
@@ -235,7 +242,7 @@ function Objetos() {
   return (
     <>
       <div className="obsgrid">
-        {(Object.keys(OBS_LBL) as ObsType[]).map(t => <button key={t} onClick={() => addObs(t)}><span>{OBS_ICON[t]}</span>+ {OBS_LBL[t]}</button>)}
+        {(Object.keys(OBS_LBL) as ObsType[]).map(t => <button key={t} onClick={() => addObs(t)}>{OBS_ICON[t]}+ {OBS_LBL[t]}</button>)}
       </div>
       {p.obstacles.length === 0 && <p className="note">No hay objetos. Si nada da sombra, puedes pasar al siguiente paso.</p>}
       <div className="list">
@@ -269,7 +276,7 @@ function Objetos() {
         <p className="note">La línea punteada en el 3D marca la distancia libre a la casa.</p>
         <button className="btn sec sm" onClick={() => removeObs(o.id)}>Eliminar objeto</button>
       </div>}
-      <p className="note tip">💡 Abajo, en el <b>diagrama solar</b>, la zona gris es lo que tapa el sol: si la curva de un mes pasa por ahí, hay sombra en ese mes y hora.</p>
+      <p className="note tip"><span className="tipl">Consejo</span>Abajo, en el <b>diagrama solar</b>, la zona gris es lo que tapa el sol: si la curva de un mes pasa por ahí, hay sombra en ese mes y hora.</p>
     </>
   );
 }
@@ -406,7 +413,7 @@ function Electrico() {
         </Row>
         <p className="note">Vmp×Imp = {(m.vmp * m.imp).toFixed(0)} W{Math.abs(m.vmp * m.imp - m.pmax) > m.pmax * 0.03 ? ' ⚠ no coincide con Pmax' : ''}. Half-cut se modela como celdas completas equivalentes (resultado conservador).</p>
       </More>
-      <p className="note tip">💡 Después de cambiar strings u optimizadores, vuelve a simular (botón abajo) para comparar la energía recuperada.</p>
+      <p className="note tip"><span className="tipl">Consejo</span>Después de cambiar strings u optimizadores, vuelve a simular (botón abajo) para comparar la energía recuperada.</p>
     </>
   );
 }
