@@ -1,33 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { DayResult, ElecResult, YearResult } from '../engine/sim';
-import { parseWeather } from '../engine/weather';
-import type { Weather } from '../engine/project';
-import { parseFecha, useSim } from '../sim/useSim';
+import type { ElecResult } from '../engine/sim';
+import { analyzeDay, analyzeYear } from '../sim/analyze';
+import { useSim } from '../sim/useSim';
 import { heat, pct } from '../sim/viz';
-import { useStore, type Clima, type Mode } from '../store';
+import { DESIGN_STEPS, useStore, type Mode } from '../store';
 import SunChart from './SunChart';
 import { Seg } from './ui';
-
-let worker: Worker | null = null;
-function runWorker(msg: unknown, onProgress: (f: number) => void): Promise<DayResult | YearResult> {
-  worker?.terminate();
-  worker = new Worker(new URL('../engine/worker.ts', import.meta.url), { type: 'module' });
-  return new Promise((resolve, reject) => {
-    worker!.onmessage = e => {
-      if (e.data.type === 'progress') onProgress(e.data.f);
-      else if (e.data.type === 'done') resolve(e.data.result);
-      else reject(new Error(e.data.message));
-    };
-    worker!.postMessage(msg);
-  });
-}
-
-async function fetchPvgis(lat: number, lon: number, tz: number): Promise<Weather> {
-  const r = await fetch(`/api/pvgis?lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}`);
-  if (!r.ok) throw new Error(`No se pudo obtener PVGIS (${r.status}). En desarrollo local usa "vercel dev".`);
-  const w = parseWeather(await r.text(), 'PVGIS', { lat, lon, tz });
-  return { ...w, nombre: `PVGIS ${lat.toFixed(2)}, ${lon.toFixed(2)}`, fuente: 'PVGIS TMY' };
-}
 
 const COLS: Record<Mode, string[]> = {
   instante: ['Módulo', 'Área sombreada', 'Pérdida eléctrica', 'Difusa bloqueada'],
@@ -118,7 +96,7 @@ function Detail() {
 export default function Results() {
   const { lay, fdiff, es } = useSim();
   const mode = useStore(s => s.mode), set = useStore(s => s.set), busy = useStore(s => s.busy), error = useStore(s => s.error), stale = useStore(s => s.stale);
-  const selModule = useStore(s => s.selModule), clima = useStore(s => s.clima), hasFile = useStore(s => !!s.project.clima), yearRes = useStore(s => s.yearRes), day = useStore(s => s.day);
+  const selModule = useStore(s => s.selModule), tab = useStore(s => s.tab), yearRes = useStore(s => s.yearRes), day = useStore(s => s.day);
   const { rows, have } = useRows();
   const [sort, setSort] = useState<{ k: keyof RowT; d: number } | null>(null);
   const list = useMemo(() => {
@@ -126,39 +104,7 @@ export default function Results() {
     return [...rows].sort((x, y) => (sort.k === 'id' ? sort.d * (x.i - y.i) : sort.d * ((x[sort.k] as number) - (y[sort.k] as number))));
   }, [rows, sort]);
 
-  const params = () => {
-    const s = useStore.getState(), site = s.project.site;
-    return { sp: { lat: site.lat, lon: site.lon, tz: site.tz, albedo: site.albedo, sub: s.sub }, ...parseFecha(s.fecha) };
-  };
-  // Al terminar, el visor pasa solo al mapa de color del análisis. Si la geometría cambió mientras se
-  // calculaba, el resultado nace desactualizado; el otro análisis, si estaba desactualizado, se descarta.
-  const done = (patch: { day: DayResult } | { yearRes: YearResult }, mode: Mode, p0: unknown) => {
-    const st = useStore.getState(), other = mode === 'dia' ? { yearRes: null } : { day: null };
-    set({ ...patch, ...(st.stale ? other : {}), mode, stale: st.project !== p0 });
-  };
-  const analyzeDay = async () => {
-    const { sp, y, m, d } = params(), p0 = useStore.getState().project;
-    set({ busy: 0.3, error: null });
-    try { const res = await runWorker({ job: 'dia', lay, fdiff, sp, es, y, m, d }, f => set({ busy: f })); done({ day: res as DayResult }, 'dia', p0); }
-    catch (e) { set({ error: String((e as Error).message) }); } finally { set({ busy: null }); }
-  };
-  const analyzeYear = async () => {
-    const { sp, y } = params(), st = useStore.getState(), p0 = st.project;
-    set({ busy: 0.02, error: null });
-    try {
-      let clima: Weather | null = null;
-      if (st.clima === 'archivo') {
-        clima = st.project.clima ?? null;
-        if (!clima) throw new Error('Carga primero un archivo de clima en la pestaña Sitio.');
-      } else if (st.clima === 'pvgis') {
-        const key = `${sp.lat.toFixed(3)},${sp.lon.toFixed(3)}`;
-        clima = st.pvgisCache?.key === key ? st.pvgisCache.w : await fetchPvgis(sp.lat, sp.lon, sp.tz);
-        set({ pvgisCache: { key, w: clima } });
-      }
-      const res = await runWorker({ job: 'anio', lay, fdiff, sp, es, y, clima }, f => set({ busy: f }));
-      done({ yearRes: res as YearResult }, 'anio', p0);
-    } catch (e) { set({ error: String((e as Error).message) }); } finally { set({ busy: null }); }
-  };
+  const ctx = { lay, fdiff, es };
 
   let kpis: [string, string, string][] = [];
   if (have && rows.length) {
@@ -173,23 +119,24 @@ export default function Results() {
     }
   }
   const colorKey = mode === 'instante' ? 'a' : 'c';
+  // En los pasos de diseño (1–4) solo se muestra el diagrama solar; los resultados aparecen al simular.
+  if (DESIGN_STEPS.includes(tab)) return (
+    <section className="res solo">
+      <div className="col"><div className="tabs"><span className="lbl">Diagrama solar · trayectorias del sol y lo que lo tapa</span><BigSunChart /></div><SunChart height={168} /></div>
+    </section>
+  );
+  const run = () => (mode === 'anio' ? analyzeYear(ctx) : analyzeDay(ctx));
   return (
     <section className="res">
       <div className="col">
         <div className="tabs">
           <Seg value={mode} options={[['instante', 'Instante'], ['dia', 'Día'], ['anio', 'Año']]} onChange={m => set({ mode: m })} />
-          <button className="btn pri sm" onClick={analyzeDay} disabled={busy != null}>Analizar día</button>
-          <button className="btn sec sm" onClick={analyzeYear} disabled={busy != null}>Analizar año</button>
-          <select className="clima" value={clima} onChange={e => set({ clima: e.target.value as Clima })} title="Clima para el análisis anual">
-            <option value="despejado">Año: cielo despejado</option>
-            <option value="archivo" disabled={!hasFile}>Año: archivo de clima{hasFile ? '' : ' (cargar en Sitio)'}</option>
-            <option value="pvgis">Año: PVGIS (TMY)</option>
-          </select>
+          {mode !== 'instante' && <button className="btn pri sm" onClick={run} disabled={busy != null}>{have ? 'Volver a simular' : 'Simular'} {mode === 'dia' ? 'día' : 'año'}</button>}
         </div>
         {busy != null && <div className="prog"><div style={{ width: `${Math.round(busy * 100)}%` }} /></div>}
         {error && <div className="warn">⚠ {error}</div>}
-        {!have && <div className="stale">Presiona “Analizar {mode === 'dia' ? 'día' : 'año'}” para calcular.</div>}
-        {have && stale && mode !== 'instante' && <div className="warn">⚠ Resultados desactualizados: la geometría o la configuración cambió desde el último análisis. Vuelve a analizar el {mode === 'dia' ? 'día' : 'año'}.</div>}
+        {!have && <div className="stale">Aún no hay resultados del {mode === 'dia' ? 'día' : 'año'}: presiona “Simular”.</div>}
+        {have && stale && mode !== 'instante' && <div className="warn">⚠ Resultados desactualizados: la geometría o la configuración cambió desde la última simulación. Vuelve a simular el {mode === 'dia' ? 'día' : 'año'}.</div>}
         <div className="kpis">{kpis.map(([k, v, s]) => <div className="kpi" key={k}><div className="k">{k}</div><div className="v">{v}</div><div className="s">{s}</div></div>)}</div>
         {have && <table>
           <thead><tr>{COLS[mode].map((c, j) => {
@@ -209,7 +156,20 @@ export default function Results() {
 
 const kwh = (x: number) => (x >= 100 ? x.toFixed(0) : x.toFixed(1));
 function RightPanel({ elec, periodo }: { elec: ElecResult | null; periodo: string }) {
-  const [tab, setTab] = useState<'solar' | 'grafico' | 'strings'>('solar');
+  const [tab, setTab] = useState<'grafico' | 'strings' | 'solar'>('grafico');
+  return (
+    <>
+      <div className="tabs">
+        <Seg value={tab} options={[['grafico', 'Gráfico'], ['strings', 'Strings y optimizadores'], ['solar', 'Diagrama solar']]} onChange={setTab} />
+        {tab === 'solar' && <BigSunChart />}
+      </div>
+      {tab === 'solar' ? <SunChart /> : tab === 'grafico' ? <><Chart /><Detail /></> : <ElecPanel elec={elec} periodo={periodo} />}
+    </>
+  );
+}
+
+/** Botón "Ampliar" que abre el diagrama solar grande en una ventana (Esc o clic fuera para cerrar). */
+function BigSunChart() {
   const [big, setBig] = useState(false);
   useEffect(() => {
     if (!big) return;
@@ -218,11 +178,7 @@ function RightPanel({ elec, periodo }: { elec: ElecResult | null; periodo: strin
   }, [big]);
   return (
     <>
-      <div className="tabs">
-        <Seg value={tab} options={[['solar', 'Diagrama solar'], ['strings', 'Strings y optimizadores'], ['grafico', 'Gráfico']]} onChange={setTab} />
-        {tab === 'solar' && <button className="btn ter sm" onClick={() => setBig(true)}>Ampliar</button>}
-      </div>
-      {tab === 'solar' ? <SunChart /> : tab === 'grafico' ? <><Chart /><Detail /></> : <ElecPanel elec={elec} periodo={periodo} />}
+      <button className="btn ter sm" onClick={() => setBig(true)}>Ampliar</button>
       {big && (
         <div className="modal" onClick={() => setBig(false)}>
           <div className="modalbox" onClick={e => e.stopPropagation()}>

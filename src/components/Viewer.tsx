@@ -4,7 +4,13 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { Box, Module, Prim, Table } from '../engine/engine';
 import { distanceToHouse, housePrims, obstaclePrims, surfaceHeight } from '../engine/project';
-import { useStore } from '../store';
+import { DESIGN_STEPS, useStore, type Sel, type Tab } from '../store';
+
+/** Selecciona un objeto; solo salta a su paso si se está diseñando (en Simular/Eléctrico se queda ahí). */
+function pick(sel: Sel, tab: Tab, extra: { selModule?: number } = {}) {
+  const st = useStore.getState();
+  st.set(DESIGN_STEPS.includes(st.tab) ? { sel, tab, ...extra } : { sel, ...extra });
+}
 import { parseFecha, useSim } from '../sim/useSim';
 import { drawModule, drawModuleElec, pct, PX } from '../sim/viz';
 import { sunVector } from '../engine/engine';
@@ -66,10 +72,10 @@ function TriMesh({ tris, material, onClick }: { tris: Prim[]; material: THREE.Ma
 
 // ---------- casa ----------
 function HouseMesh() {
-  const house = useStore(s => s.project.house), sel = useStore(s => s.sel), set = useStore(s => s.set);
+  const house = useStore(s => s.project.house), sel = useStore(s => s.sel);
   const prims = useMemo(() => housePrims(house), [house]);
   const selected = sel?.kind === 'house';
-  const click = (e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); set({ sel: { kind: 'house' }, tab: 'casa' }); };
+  const click = (e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); pick({ kind: 'house' }, 'casa'); };
   const roofMat = useMemo(() => {
     const m = MAT.techo.clone(); if (selected) { m.emissive = SEL_EMISSIVE; m.emissiveIntensity = 0.2; } return m;
   }, [selected]);
@@ -126,7 +132,7 @@ function ModuleMesh({ m, t, idx }: { m: Module; t: Table; idx: number }) {
       <mesh geometry={geo} castShadow onClick={e => {
         e.stopPropagation();
         if (elecView) { clickElec(m.key); set({ selModule: idx }); return; }
-        set({ selModule: idx, sel: { kind: 'field', id: fieldId }, tab: 'paneles' });
+        pick({ kind: 'field', id: fieldId }, 'paneles', { selModule: idx });
       }}>
         {flat
           ? <meshBasicMaterial key="flat" map={tex} toneMapped={false} side={THREE.DoubleSide} />
@@ -143,7 +149,7 @@ function ModuleMesh({ m, t, idx }: { m: Module; t: Table; idx: number }) {
 
 function Fields() {
   const { lay } = useSim();
-  const sel = useStore(s => s.sel), fields = useStore(s => s.project.fields), project = useStore(s => s.project), set = useStore(s => s.set);
+  const sel = useStore(s => s.sel), fields = useStore(s => s.project.fields), project = useStore(s => s.project);
   return (
     <group>
       {lay.tables.map(t => {
@@ -163,7 +169,7 @@ function Fields() {
         }
         return (
           <group key={t.id}>
-            <mesh position={c} quaternion={q} castShadow receiveShadow onClick={e => { e.stopPropagation(); set({ sel: { kind: 'field', id: f.id }, tab: 'paneles' }); }}>
+            <mesh position={c} quaternion={q} castShadow receiveShadow onClick={e => { e.stopPropagation(); pick({ kind: 'field', id: f.id }, 'paneles'); }}>
               <boxGeometry args={[t.W + 0.04, 0.05, t.L + 0.04]} />
               <meshStandardMaterial color={selected ? '#FAB704' : '#9aa4ab'} metalness={0.4} roughness={0.6} />
             </mesh>
@@ -178,12 +184,12 @@ function Fields() {
 
 // ---------- objetos ----------
 function Obstacles() {
-  const project = useStore(s => s.project), sel = useStore(s => s.sel), set = useStore(s => s.set), showDims = useStore(s => s.showDims);
+  const project = useStore(s => s.project), sel = useStore(s => s.sel), showDims = useStore(s => s.showDims);
   return (
     <group>
       {project.obstacles.map(ob => {
         const selected = sel?.kind === 'obs' && sel.id === ob.id;
-        const click = (e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); set({ sel: { kind: 'obs', id: ob.id }, tab: 'objetos' }); };
+        const click = (e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); pick({ kind: 'obs', id: ob.id }, 'objetos'); };
         const dist = showDims || selected ? distanceToHouse(project, ob) : null;
         return (
           <group key={ob.id}>

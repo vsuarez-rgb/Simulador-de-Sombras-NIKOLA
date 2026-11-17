@@ -1,9 +1,11 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { distanceToHouse, eaveHeight, TILT_RANGES, uid, type ElecTool, type ObsType, type RoofType, type TiltRange } from '../engine/project';
 import { parseWeather, weatherSummary } from '../engine/weather';
-import { STRING_COLORS } from '../sim/viz';
-import { useStore, type Tab } from '../store';
-import { useSim } from '../sim/useSim';
+import { analyzeDay, analyzeYear } from '../sim/analyze';
+import { daySummary, hhmm } from '../sim/sunpath';
+import { STRING_COLORS, pct } from '../sim/viz';
+import { goStep, STEPS, useStore, type Clima, type Tab } from '../store';
+import { parseFecha, useSim } from '../sim/useSim';
 import { H3, Num, Row, Seg } from './ui';
 
 const CIUDADES: [string, number, number][] = [
@@ -13,40 +15,211 @@ const CIUDADES: [string, number, number][] = [
   ['Puerto Montt', -41.47, -72.94], ['Punta Arenas', -53.16, -70.92],
 ];
 const OBS_LBL: Record<ObsType, string> = { arbol: 'Árbol', poste: 'Poste', edificio: 'Edificio vecino', muro: 'Muro', chimenea: 'Chimenea / ducto' };
+const OBS_ICON: Record<ObsType, string> = { arbol: '🌳', poste: '│', edificio: '🏢', muro: '▭', chimenea: '▮' };
 const ROOF: [RoofType, string][] = [['plano', 'Plano'], ['una_agua', '1 agua'], ['dos_aguas', '2 aguas'], ['cuatro_aguas', '4 aguas']];
 
+/** Nombre del punto cardinal más cercano a un azimut (0 = Norte, sentido horario). */
+const rumbo = (az: number) => ['Norte', 'Noreste', 'Este', 'Sureste', 'Sur', 'Suroeste', 'Oeste', 'Noroeste'][Math.round((((az % 360) + 360) % 360) / 45) % 8];
+
+/** Opciones avanzadas plegadas: lo esencial queda a la vista, el resto a un clic. */
+const More = ({ children, label = 'Más opciones' }: { children: ReactNode; label?: string }) => (
+  <details className="more"><summary>{label}</summary><div>{children}</div></details>
+);
+
+const STEP_INFO: Record<Tab, { t: string; short: string; d: string }> = {
+  sitio: { t: 'Ubicación', short: 'Lugar', d: 'Elige la ciudad del proyecto. La trayectoria del sol (3D y diagrama) cambia con la ubicación y el mes.' },
+  casa: { t: 'Casa y techo', short: 'Casa', d: 'Indica las medidas de la casa y el tipo de techo donde irán los paneles.' },
+  paneles: { t: 'Paneles', short: 'Paneles', d: 'Agrega los campos de paneles y define cuántas filas y módulos tiene cada uno.' },
+  objetos: { t: 'Sombras del entorno', short: 'Sombras', d: 'Agrega lo que puede dar sombra: árboles, edificios vecinos, postes, muros o chimeneas. Este paso es opcional.' },
+  simular: { t: 'Simular', short: 'Simular', d: 'Calcula cuánto pierden los paneles por sombra en un día o en el año completo.' },
+  electrico: { t: 'Eléctrico', short: 'Eléctrico', d: 'Ajusta inversor, strings y optimizadores, y compara cuánta energía se recupera.' },
+};
+
+// ---------- 1. Ubicación ----------
 function Sitio() {
-  const p = useStore(s => s.project), { setSite, setModulo, set } = useStore.getState(), sub = useStore(s => s.sub);
+  const p = useStore(s => s.project), { setSite } = useStore.getState(), fecha = useStore(s => s.fecha);
+  const { y } = parseFecha(fecha), inv = daySummary(p.site, y, 6, 21), ver = daySummary(p.site, y, 12, 21), sur = p.site.lat < 0;
+  const [w, s] = sur ? [inv, ver] : [ver, inv];
   return (
     <>
-      <H3>Ubicación</H3>
-      <label className="mb">Ciudad
+      <label className="mb big">Ciudad
         <select value={p.site.nombre} onChange={e => { const c = CIUDADES.find(c => c[0] === e.target.value); if (c) setSite({ nombre: c[0], lat: c[1], lon: c[2] }); }}>
-          <option value="">— personalizada —</option>
+          <option value="">— otra ubicación (coordenadas) —</option>
           {CIUDADES.map(c => <option key={c[0]}>{c[0]}</option>)}
         </select>
       </label>
-      <Row cols={3}>
-        <Num label="Latitud" value={p.site.lat} step={0.01} onChange={lat => setSite({ lat, nombre: '' })} />
-        <Num label="Longitud" value={p.site.lon} step={0.01} onChange={lon => setSite({ lon, nombre: '' })} />
-        <label>UTC<select value={p.site.tz} onChange={e => setSite({ tz: +e.target.value })}>{[-3, -4, -5, -6].map(t => <option key={t} value={t}>{t}</option>)}</select></label>
+      <Row>
+        <Num label="Latitud" value={p.site.lat} step={0.01} min={-89} max={89} onChange={lat => setSite({ lat, nombre: '' })} />
+        <Num label="Longitud" value={p.site.lon} step={0.01} min={-180} max={180} onChange={lon => setSite({ lon, nombre: '' })} />
       </Row>
-      <Row><Num label="Albedo suelo" value={p.site.albedo} step={0.05} min={0} max={1} onChange={albedo => setSite({ albedo })} /></Row>
-      <ClimaBox />
-      <H3>Módulo FV</H3>
-      <Row cols={3}>
-        <Num label="Largo" unit="m" value={p.modulo.largo} step={0.001} min={0.5} onChange={largo => setModulo({ largo })} />
-        <Num label="Ancho" unit="m" value={p.modulo.ancho} step={0.001} min={0.3} onChange={ancho => setModulo({ ancho })} />
-        <Num label="Separación" unit="m" value={p.modulo.gap} step={0.01} min={0} onChange={gap => setModulo({ gap })} />
-      </Row>
-      <p className="note">Datos eléctricos del módulo en la pestaña Eléctrico.</p>
-      <H3>Precisión del cálculo</H3>
-      <label>Puntos por celda<select value={sub} onChange={e => set({ sub: +e.target.value, day: null, yearRes: null })}>
-        <option value={1}>1 (rápido)</option><option value={2}>4 (recomendado)</option><option value={3}>9 (fino)</option></select></label>
+      <div className="card thin suncards">
+        <div><span className="lbl">Invierno · 21 {sur ? 'jun' : 'dic'}</span><b>{w.horas.toFixed(1)} h de sol</b><span>sol máx. {w.maxEl.toFixed(0)}° · {w.sale !== null ? `${hhmm(w.sale)}–${hhmm(w.pone!)}` : '—'}</span></div>
+        <div><span className="lbl">Verano · 21 {sur ? 'dic' : 'jun'}</span><b>{s.horas.toFixed(1)} h de sol</b><span>sol máx. {s.maxEl.toFixed(0)}° · {s.sale !== null ? `${hhmm(s.sale)}–${hhmm(s.pone!)}` : '—'}</span></div>
+      </div>
+      <p className="note">Usa los botones <b>Ene … Dic</b> bajo el visor para ver cómo cambia el recorrido del sol durante el año.</p>
+      <More>
+        <Row>
+          <label>Zona horaria (UTC)<select value={p.site.tz} onChange={e => setSite({ tz: +e.target.value })}>{[-3, -4, -5, -6].map(t => <option key={t} value={t}>{t}</option>)}</select></label>
+          <Num label="Albedo del suelo" value={p.site.albedo} step={0.05} min={0} max={1} onChange={albedo => setSite({ albedo })} />
+        </Row>
+      </More>
     </>
   );
 }
 
+// ---------- 2. Casa y techo ----------
+function Casa() {
+  const h = useStore(s => s.project.house), { setHouse } = useStore.getState();
+  return (
+    <>
+      <label className="check"><input type="checkbox" checked={h.enabled} onChange={e => setHouse({ enabled: e.target.checked })} /> Hay una casa o edificio</label>
+      {!h.enabled && <p className="note">Sin casa, los paneles van en el suelo o en un carport (paso siguiente).</p>}
+      {h.enabled && <>
+        <H3>Medidas</H3>
+        <Row cols={3}>
+          <Num label="Ancho" unit="m" value={h.ancho} min={2} onChange={ancho => setHouse({ ancho })} />
+          <Num label="Fondo" unit="m" value={h.fondo} min={2} onChange={fondo => setHouse({ fondo })} />
+          <Num label="Pisos" value={h.pisos} step={1} min={1} max={30} onChange={pisos => setHouse({ pisos: Math.round(pisos) })} />
+        </Row>
+        <H3>Techo</H3>
+        <Seg value={h.techo} options={ROOF} onChange={techo => setHouse({ techo })} />
+        {h.techo !== 'plano' && <label>Pendiente: <b className="am">{h.pendiente}°</b>
+          <input type="range" min={5} max={60} step={1} value={h.pendiente} onChange={e => setHouse({ pendiente: +e.target.value })} /></label>}
+        <H3>Orientación</H3>
+        <label>El frente mira al <b className="am">{rumbo(h.rot)}</b> ({h.rot}°)
+          <input type="range" min={0} max={359} step={1} value={h.rot} onChange={e => setHouse({ rot: +e.target.value })} /></label>
+        <div className="quick">{[['N', 0], ['E', 90], ['S', 180], ['O', 270]].map(([n, a]) => <button key={n} className={h.rot === a ? 'on' : ''} onClick={() => setHouse({ rot: a as number })}>{n}</button>)}</div>
+        <p className="note">Altura de aleros {eaveHeight(h).toFixed(1)} m. El frente define hacia dónde cae el faldón frontal del techo.</p>
+        <More>
+          <Row cols={3}>
+            <Num label="Centro X" unit="m" value={h.x} onChange={x => setHouse({ x })} />
+            <Num label="Centro Y" unit="m" value={h.y} onChange={y => setHouse({ y })} />
+            <Num label="Alto por piso" unit="m" value={h.altoPiso} min={2} onChange={altoPiso => setHouse({ altoPiso })} />
+          </Row>
+          <Row cols={3}>
+            {h.techo !== 'plano' && <Num label="Alero" unit="m" value={h.alero} min={0} max={2} onChange={alero => setHouse({ alero })} />}
+            {h.techo === 'plano' && <Num label="Parapeto" unit="m" value={h.parapeto} min={0} onChange={parapeto => setHouse({ parapeto })} />}
+          </Row>
+          <p className="note">X = metros hacia el Este, Y = metros hacia el Norte.</p>
+        </More>
+      </>}
+    </>
+  );
+}
+
+// ---------- 3. Paneles ----------
+function Paneles() {
+  const p = useStore(s => s.project), sel = useStore(s => s.sel), { setField, addField, removeField, setModulo, set } = useStore.getState();
+  const { fieldInfo, lay } = useSim();
+  const f = sel?.kind === 'field' ? p.fields.find(x => x.id === sel.id) : undefined;
+  const info = f ? fieldInfo.find(i => i.id === f.id) : undefined;
+  const kwp = (lay.modules.length * p.modulo.pmax) / 1000;
+  return (
+    <>
+      <div className="total"><b>{lay.modules.length}</b> módulos · <b>{kwp.toFixed(2)}</b> kWp</div>
+      <div className="list">
+        {p.fields.map((x, i) => {
+          const fi = fieldInfo[i], n = lay.modules.filter(m => m.field === i).length;
+          return <button key={x.id} className={'item' + (f?.id === x.id ? ' on' : '')} onClick={() => set({ sel: { kind: 'field', id: x.id } })}>
+            <b>{x.nombre}</b><span>{n} mód. · {fi?.superficie} · {fi?.tilt.toFixed(0)}° hacia el {rumbo(fi?.azim ?? 0)}{fi?.avisos.length ? ' · ⚠' : ''}</span></button>;
+        })}
+      </div>
+      <div className="addrow">
+        <button className="btn ter" onClick={() => addField('techo')} disabled={!p.house.enabled}>+ Campo en el techo</button>
+        <button className="btn ter" onClick={() => addField('suelo')}>+ Campo en suelo / carport</button>
+      </div>
+      {f && info && <div className="card">
+        <label>Nombre<input value={f.nombre} onChange={e => setField(f.id, { nombre: e.target.value })} /></label>
+        <Row>
+          <Num label="Filas" value={f.filas} step={1} min={1} max={50} onChange={v => setField(f.id, { filas: Math.round(v) })} />
+          <Num label="Módulos por fila" value={f.mods} step={1} min={1} max={100} onChange={v => setField(f.id, { mods: Math.round(v) })} />
+        </Row>
+        <label className="lblsm">Módulo</label>
+        <Seg value={f.orient} options={[['V', 'Vertical'], ['H', 'Horizontal']]} onChange={orient => setField(f.id, { orient })} />
+        <label className="lblsm">Montaje</label>
+        <Seg value={f.montaje} options={[['coplanar', 'Pegado al techo'], ['inclinada', 'Con estructura']]} onChange={montaje => setField(f.id, { montaje })} />
+        {f.montaje === 'inclinada' && <label>Inclinación: <b className="am">{f.tilt}°</b>
+          <input type="range" min={TILT_RANGES[f.rango][0]} max={TILT_RANGES[f.rango][1]} step={1} value={f.tilt} onChange={e => setField(f.id, { tilt: +e.target.value })} /></label>}
+        {(f.montaje === 'inclinada' || info.tilt === 0) && <>
+          <label>Miran al <b className="am">{rumbo(f.azim)}</b> ({f.azim}°)
+            <input type="range" min={-180} max={180} step={1} value={f.azim} onChange={e => setField(f.id, { azim: +e.target.value })} /></label>
+        </>}
+        <p className="note">Resultado: inclinación {info.tilt.toFixed(1)}° hacia el {rumbo(info.azim)} ({info.azim.toFixed(0)}°){f.montaje === 'coplanar' && info.tilt > 0 ? ', igual que el faldón' : ''}.</p>
+        {info.avisos.map(a => <div key={a} className="warn">⚠ {a}</div>)}
+        <More>
+          <Row cols={3}>
+            <Num label="Centro X" unit="m" value={f.x} onChange={x => setField(f.id, { x })} />
+            <Num label="Centro Y" unit="m" value={f.y} onChange={y => setField(f.id, { y })} />
+            <Num label="Altura" unit="m" value={f.altura} min={0} onChange={altura => setField(f.id, { altura })} />
+          </Row>
+          <Row cols={3}>
+            <Num label="En alto" value={f.enAlto} step={1} min={1} max={4} onChange={v => setField(f.id, { enAlto: Math.round(v) })} />
+            {f.montaje === 'inclinada' && <Num label="Distancia filas" unit="m" value={f.pitch} min={0.5} onChange={pitch => setField(f.id, { pitch })} />}
+            {f.montaje === 'inclinada' && <Num label="Azimut" unit="°" value={f.azim} step={1} onChange={azim => setField(f.id, { azim })} />}
+          </Row>
+          {f.montaje === 'inclinada' && <><label className="lblsm">Rango de la estructura</label>
+            <Seg value={f.rango} options={(Object.keys(TILT_RANGES) as TiltRange[]).map(r => [r, `${r}°`])}
+              onChange={rango => { const [a, b] = TILT_RANGES[rango]; setField(f.id, { rango, tilt: Math.min(b, Math.max(a, f.tilt)) }); }} /></>}
+          <p className="note">X = metros hacia el Este, Y = metros hacia el Norte (0, 0 = centro de la casa por defecto).</p>
+        </More>
+        <button className="btn sec sm" onClick={() => removeField(f.id)}>Eliminar campo</button>
+      </div>}
+      {!f && p.fields.length > 0 && <p className="note">Elige un campo de la lista (o haz clic en él en el 3D) para editarlo.</p>}
+      <More label="Medidas del módulo">
+        <Row cols={3}>
+          <Num label="Largo" unit="m" value={p.modulo.largo} step={0.001} min={0.5} onChange={largo => setModulo({ largo })} />
+          <Num label="Ancho" unit="m" value={p.modulo.ancho} step={0.001} min={0.3} onChange={ancho => setModulo({ ancho })} />
+          <Num label="Separación" unit="m" value={p.modulo.gap} step={0.01} min={0} onChange={gap => setModulo({ gap })} />
+        </Row>
+        <Row><Num label="Potencia" unit="W" value={p.modulo.pmax} step={5} min={50} onChange={pmax => setModulo({ pmax })} /></Row>
+      </More>
+    </>
+  );
+}
+
+// ---------- 4. Sombras del entorno ----------
+function Objetos() {
+  const p = useStore(s => s.project), sel = useStore(s => s.sel), { setObs, addObs, removeObs, set } = useStore.getState();
+  const o = sel?.kind === 'obs' ? p.obstacles.find(x => x.id === sel.id) : undefined;
+  const dist = o ? distanceToHouse(p, o) : null;
+  return (
+    <>
+      <div className="obsgrid">
+        {(Object.keys(OBS_LBL) as ObsType[]).map(t => <button key={t} onClick={() => addObs(t)}><span>{OBS_ICON[t]}</span>+ {OBS_LBL[t]}</button>)}
+      </div>
+      {p.obstacles.length === 0 && <p className="note">No hay objetos. Si nada da sombra, puedes pasar al siguiente paso.</p>}
+      <div className="list">
+        {p.obstacles.map(x => {
+          const d = distanceToHouse(p, x);
+          return <button key={x.id} className={'item' + (o?.id === x.id ? ' on' : '')} onClick={() => set({ sel: { kind: 'obs', id: x.id } })}>
+            <b>{OBS_ICON[x.tipo]} {OBS_LBL[x.tipo]}</b><span>{x.alto} m de alto{d ? (d.inside ? ' · sobre la casa' : ` · a ${d.d.toFixed(1)} m de la casa`) : ''}</span></button>;
+        })}
+      </div>
+      {o && <div className="card">
+        <div className="eff"><span>Distancia a la casa</span><b>{dist ? (dist.inside ? 'sobre la casa' : `${dist.d.toFixed(2)} m`) : '—'}</b></div>
+        <Row cols={3}>
+          <Num label={o.tipo === 'chimenea' ? 'Alto sobre techo' : 'Alto'} unit="m" value={o.alto} min={0.1} onChange={alto => setObs(o.id, { alto })} />
+          <Num label="X (Este)" unit="m" value={o.x} onChange={x => setObs(o.id, { x })} />
+          <Num label="Y (Norte)" unit="m" value={o.y} onChange={y => setObs(o.id, { y })} />
+        </Row>
+        {o.tipo === 'arbol' && <Row><Num label="Diámetro copa" unit="m" value={o.copa} min={0.5} onChange={copa => setObs(o.id, { copa })} /></Row>}
+        {o.tipo === 'poste' && <Row><Num label="Diámetro" unit="m" value={o.ancho} min={0.05} onChange={ancho => setObs(o.id, { ancho })} /></Row>}
+        {['edificio', 'muro', 'chimenea'].includes(o.tipo) && <More label="Medidas y giro">
+          <Row cols={3}>
+            <Num label={o.tipo === 'muro' ? 'Largo' : 'Ancho'} unit="m" value={o.ancho} min={0.1} onChange={ancho => setObs(o.id, { ancho })} />
+            <Num label={o.tipo === 'muro' ? 'Espesor' : 'Fondo'} unit="m" value={o.largo} min={0.05} onChange={largo => setObs(o.id, { largo })} />
+            <Num label="Giro" unit="°" value={o.rot} step={1} onChange={rot => setObs(o.id, { rot })} />
+          </Row>
+        </More>}
+        <p className="note">X = metros hacia el Este y Y = metros hacia el Norte desde el centro. La línea punteada en el 3D marca la distancia libre a la casa.</p>
+        <button className="btn sec sm" onClick={() => removeObs(o.id)}>Eliminar objeto</button>
+      </div>}
+      <p className="note tip">💡 Abajo, en el <b>diagrama solar</b>, la zona gris es lo que tapa el sol: si la curva de un mes pasa por ahí, hay sombra en ese mes y hora.</p>
+    </>
+  );
+}
+
+// ---------- 5. Simular ----------
 function ClimaBox() {
   const clima = useStore(s => s.project.clima), site = useStore(s => s.project.site), { setClimaData, setSite } = useStore.getState();
   const file = useRef<HTMLInputElement>(null);
@@ -54,8 +227,7 @@ function ClimaBox() {
   const sum = clima ? weatherSummary(clima) : null;
   return (
     <>
-      <H3>Clima (año típico)</H3>
-      <p className="note">Carga el archivo horario del <a href="https://solarexplorer.minenergia.cl/" target="_blank" rel="noreferrer">Explorador Solar</a> (Descargas → “Datos Horarios TMY SAM” o “Datos Horarios PVsyst”), o un EPW / CSV de PVGIS, Meteonorm, SAM.</p>
+      <p className="note">Carga el archivo horario del <a href="https://solarexplorer.minenergia.cl/" target="_blank" rel="noreferrer">Explorador Solar</a> (Descargas → “Datos Horarios TMY SAM” o “PVsyst”), o un EPW / CSV de PVGIS, Meteonorm o SAM.</p>
       <div className="addrow">
         <button className="btn ter" onClick={() => file.current?.click()}>{clima ? 'Cambiar archivo' : 'Cargar archivo de clima'}</button>
         {clima && <button className="btn ter" onClick={() => setClimaData(null)}>Quitar</button>}
@@ -72,13 +244,55 @@ function ClimaBox() {
       {err && <div className="warn">⚠ {err}</div>}
       {clima && sum && <div className="card thin">
         <div className="eff"><span>{clima.fuente}</span><b>{clima.nombre}</b></div>
-        <p className="note">{sum.n} horas · GHI {sum.ghi.toFixed(0)} kWh/m²·año · DNI {sum.dni.toFixed(0)} · DHI {sum.dhi.toFixed(0)} · T media {sum.tmed.toFixed(1)} °C<br />
-          Zona horaria del archivo UTC{clima.tz >= 0 ? '+' : ''}{clima.tz} · ajuste horario detectado {clima.offset >= 0 ? '+' : ''}{clima.offset} h{clima.lat != null ? ` · ${clima.lat.toFixed(3)}, ${clima.lon?.toFixed(3)}` : ''}</p>
+        <p className="note">{sum.n} horas · GHI {sum.ghi.toFixed(0)} kWh/m²·año · T media {sum.tmed.toFixed(1)} °C · UTC{clima.tz >= 0 ? '+' : ''}{clima.tz}</p>
       </div>}
     </>
   );
 }
 
+function Simular() {
+  const sim = useSim();
+  const mode = useStore(s => s.mode), clima = useStore(s => s.clima), sub = useStore(s => s.sub), fecha = useStore(s => s.fecha);
+  const busy = useStore(s => s.busy), error = useStore(s => s.error), day = useStore(s => s.day), yearRes = useStore(s => s.yearRes), stale = useStore(s => s.stale);
+  const set = useStore(s => s.set);
+  const [periodo, setPeriodo] = useState<'dia' | 'anio'>(mode === 'dia' ? 'dia' : 'anio');
+  const R = periodo === 'dia' ? day : yearRes, ok = !!R && R.mods.length === sim.lay.modules.length;
+  const W = ok ? R!.mods.reduce((s, r) => s + r.Gtot, 0) || 1 : 1;
+  const perd = ok ? R!.mods.reduce((s, r) => s + r.perdElec * r.Gtot, 0) / W : 0;
+  const sombra = ok ? R!.mods.reduce((s, r) => s + r.sombraDirecta * r.Gtot, 0) / W : 0;
+  if (!sim.lay.modules.length) return <div className="warn">⚠ Primero agrega paneles en el paso 3.</div>;
+  return (
+    <>
+      <H3>¿Qué quieres simular?</H3>
+      <div className="choice">
+        <button className={periodo === 'anio' ? 'on' : ''} onClick={() => setPeriodo('anio')}><b>Año completo</b><span>Pérdida total por sombra en el año (recomendado)</span></button>
+        <button className={periodo === 'dia' ? 'on' : ''} onClick={() => setPeriodo('dia')}><b>Un día</b><span>Ver hora a hora un día específico</span></button>
+      </div>
+      {periodo === 'dia' && <label>Día<input type="date" value={fecha} onChange={e => e.target.value && set({ fecha: e.target.value, day: null })} /></label>}
+      {periodo === 'anio' && <>
+        <H3>Datos de clima</H3>
+        <Seg value={clima} options={[['despejado', 'Cielo despejado'], ['archivo', 'Archivo'], ['pvgis', 'PVGIS']] as [Clima, string][]} onChange={c => set({ clima: c })} />
+        <p className="note">{clima === 'despejado' ? 'Supone sol todos los días: sirve para comparar sombras, no para estimar energía real.' : clima === 'pvgis' ? 'Año típico de PVGIS para estas coordenadas (requiere conexión a internet).' : 'Usa un año típico medido para tu ubicación.'}</p>
+        {clima === 'archivo' && <ClimaBox />}
+      </>}
+      <button className="btn pri big" disabled={busy != null} onClick={() => (periodo === 'anio' ? analyzeYear(sim) : analyzeDay(sim))}>
+        {busy != null ? `Calculando… ${Math.round(busy * 100)}%` : `▶ Simular ${periodo === 'anio' ? 'el año' : 'el día'}`}</button>
+      {busy != null && <div className="prog"><div style={{ width: `${Math.round(busy * 100)}%` }} /></div>}
+      {error && <div className="warn">⚠ {error}</div>}
+      {ok && <div className="card result">
+        <div className="eff"><span>Pérdida de energía por sombra {periodo === 'anio' ? 'en el año' : 'en el día'}</span><b className="xl">{pct(perd)}</b></div>
+        <p className="note">Sombra directa sobre los paneles: {pct(sombra)}. El detalle por módulo está abajo y el color de cada panel en el 3D.</p>
+        {stale && <div className="warn">⚠ Cambiaste algo después de simular: vuelve a simular.</div>}
+      </div>}
+      <More label="Precisión del cálculo">
+        <label>Puntos por celda<select value={sub} onChange={e => set({ sub: +e.target.value, day: null, yearRes: null })}>
+          <option value={1}>1 (rápido)</option><option value={2}>4 (recomendado)</option><option value={3}>9 (fino)</option></select></label>
+      </More>
+    </>
+  );
+}
+
+// ---------- 6. Eléctrico ----------
 function Electrico() {
   const p = useStore(s => s.project), tool = useStore(s => s.tool), active = useStore(s => s.activeString);
   const { setModulo, setElec, set } = useStore.getState(), { rs, lay } = useSim();
@@ -88,36 +302,15 @@ function Electrico() {
     const strings = rs.strings.map(s => ({ id: uid(), nombre: s.name, mppt: s.mppt, mods: s.mods.map(mi => lay.modules[mi].key) }));
     setElec({ modo: 'manual', strings }); set({ activeString: strings[0]?.id ?? null, tool: 'string' });
   };
-  const TOOLS: [ElecTool, string][] = [['string', 'Asignar string'], ['optimizador', 'Optimizador'], ['excluir', 'Excluir módulo']];
+  const TOOLS: [ElecTool, string][] = [['string', 'Asignar string'], ['optimizador', 'Optimizador'], ['excluir', 'Excluir']];
   return (
     <>
-      <H3>Módulo (ficha técnica, STC)</H3>
-      <Row cols={3}>
-        <Num label="Pmax" unit="W" value={m.pmax} step={5} min={50} onChange={pmax => setModulo({ pmax })} />
-        <Num label="Voc" unit="V" value={m.voc} min={5} onChange={voc => setModulo({ voc })} />
-        <Num label="Isc" unit="A" value={m.isc} min={0.5} onChange={isc => setModulo({ isc })} />
-      </Row>
-      <Row cols={3}>
-        <Num label="Vmp" unit="V" value={m.vmp} min={5} onChange={vmp => setModulo({ vmp })} />
-        <Num label="Imp" unit="A" value={m.imp} min={0.5} onChange={imp => setModulo({ imp })} />
-        <label>Celdas<select value={m.celdas} onChange={x => setModulo({ celdas: +x.target.value as 60 | 72 })}><option value={60}>60 (120 half-cut)</option><option value={72}>72 (144 half-cut)</option></select></label>
-      </Row>
-      <Row cols={3}>
-        <Num label="Coef. Pmax" unit="%/°C" value={m.gammaP} step={0.01} onChange={gammaP => setModulo({ gammaP })} />
-        <Num label="NOCT" unit="°C" value={m.noct} step={1} onChange={noct => setModulo({ noct })} />
-      </Row>
-      <p className="note">Vmp×Imp = {(m.vmp * m.imp).toFixed(0)} W{Math.abs(m.vmp * m.imp - m.pmax) > m.pmax * 0.03 ? ' ⚠ no coincide con Pmax' : ''}. Half-cut se modela como celdas completas equivalentes (resultado conservador ante sombra en la fila inferior).</p>
-      <H3>Inversor</H3>
-      <Row cols={3}>
-        <Num label="MPPT mín." unit="V" value={e.mpptMin} step={5} min={0} onChange={mpptMin => setElec({ mpptMin })} />
-        <Num label="MPPT máx." unit="V" value={e.mpptMax} step={5} min={10} onChange={mpptMax => setElec({ mpptMax })} />
-        <Num label="N° MPPT" value={e.nMppt} step={1} min={1} max={12} onChange={v => setElec({ nMppt: Math.round(v) })} />
-      </Row>
-      <Row cols={3}><Num label="Efic. optimizador" unit="%" value={+(e.optEff * 100).toFixed(1)} step={0.1} min={90} max={100} onChange={v => setElec({ optEff: v / 100 })} /></Row>
+      <div className="total"><b>{rs.strings.length}</b> string(s) · <b>{rs.optimized.length}</b> optimizador(es) · <b>{rs.excluded.length}</b> excluido(s)</div>
+      {rs.avisos.map(a => <div key={a} className="warn">⚠ {a}</div>)}
       <H3>Strings</H3>
       <Seg value={e.modo} options={[['auto', 'Automático'], ['manual', 'Manual']]} onChange={v => (v === 'manual' ? toManual() : setElec({ modo: 'auto' }))} />
-      {e.modo === 'auto' && <Row cols={3}><Num label="Módulos por string" value={e.modsPorString} step={1} min={1} max={40} onChange={v => setElec({ modsPorString: Math.round(v) })} /></Row>}
-      {e.modo === 'auto' && <p className="note">Se cablea por campo, fila por fila en serpentina, y los strings se reparten entre los MPPT.</p>}
+      {e.modo === 'auto' && <Row><Num label="Módulos por string" value={e.modsPorString} step={1} min={1} max={40} onChange={v => setElec({ modsPorString: Math.round(v) })} /></Row>}
+      {e.modo === 'auto' && <p className="note">Se cablea por campo, fila por fila, y los strings se reparten entre los MPPT.</p>}
       {e.modo === 'manual' && <>
         <div className="list">{e.strings.map((s, i) => (
           <div key={s.id} className={'item row-item' + (active === s.id ? ' on' : '')} onClick={() => set({ activeString: s.id, tool: 'string' })}>
@@ -131,153 +324,76 @@ function Electrico() {
         </div>
         <button className="btn ter" onClick={() => { const id = uid(); setElec({ strings: [...e.strings, { id, nombre: `S${e.strings.length + 1}`, mppt: e.strings.length % e.nMppt, mods: [] }] }); set({ activeString: id, tool: 'string' }); }}>+ String</button>
       </>}
-      <H3>Herramienta en 3D</H3>
+      <H3>Clic en un módulo del 3D para…</H3>
       <Seg value={tool} options={TOOLS} onChange={t => set({ tool: t })} />
-      <p className="note">{tool === 'string' ? (e.modo === 'manual' ? 'Haz clic en los módulos para agregarlos o quitarlos del string activo (en el orden de conexión).' : 'Cambia a modo Manual para armar los strings a mano.') : tool === 'optimizador' ? 'Haz clic en un módulo para ponerle o quitarle un optimizador (marcado en amarillo).' : 'Haz clic en un módulo para sacarlo del sistema (queda en gris; sigue dando sombra).'}</p>
-      <p className="note">{rs.optimized.length} optimizador(es) · {rs.excluded.length} módulo(s) excluido(s) · {rs.strings.length} string(s)</p>
-      {rs.avisos.map(a => <div key={a} className="warn">⚠ {a}</div>)}
+      <p className="note">{tool === 'string' ? (e.modo === 'manual' ? 'Agregarlo o quitarlo del string activo (en el orden de conexión).' : 'Cambia a modo Manual para armar los strings a mano.') : tool === 'optimizador' ? 'Ponerle o quitarle un optimizador (marcado en amarillo).' : 'Sacarlo del sistema (queda en gris; sigue dando sombra).'}</p>
+      <H3>Inversor</H3>
+      <Row cols={3}>
+        <Num label="MPPT mín." unit="V" value={e.mpptMin} step={5} min={0} onChange={mpptMin => setElec({ mpptMin })} />
+        <Num label="MPPT máx." unit="V" value={e.mpptMax} step={5} min={10} onChange={mpptMax => setElec({ mpptMax })} />
+        <Num label="N° MPPT" value={e.nMppt} step={1} min={1} max={12} onChange={v => setElec({ nMppt: Math.round(v) })} />
+      </Row>
+      <More label="Ficha técnica del módulo y optimizador">
+        <Row cols={3}>
+          <Num label="Pmax" unit="W" value={m.pmax} step={5} min={50} onChange={pmax => setModulo({ pmax })} />
+          <Num label="Voc" unit="V" value={m.voc} min={5} onChange={voc => setModulo({ voc })} />
+          <Num label="Isc" unit="A" value={m.isc} min={0.5} onChange={isc => setModulo({ isc })} />
+        </Row>
+        <Row cols={3}>
+          <Num label="Vmp" unit="V" value={m.vmp} min={5} onChange={vmp => setModulo({ vmp })} />
+          <Num label="Imp" unit="A" value={m.imp} min={0.5} onChange={imp => setModulo({ imp })} />
+          <label>Celdas<select value={m.celdas} onChange={x => setModulo({ celdas: +x.target.value as 60 | 72 })}><option value={60}>60 (120 half-cut)</option><option value={72}>72 (144 half-cut)</option></select></label>
+        </Row>
+        <Row cols={3}>
+          <Num label="Coef. Pmax" unit="%/°C" value={m.gammaP} step={0.01} onChange={gammaP => setModulo({ gammaP })} />
+          <Num label="NOCT" unit="°C" value={m.noct} step={1} onChange={noct => setModulo({ noct })} />
+          <Num label="Efic. optim." unit="%" value={+(e.optEff * 100).toFixed(1)} step={0.1} min={90} max={100} onChange={v => setElec({ optEff: v / 100 })} />
+        </Row>
+        <p className="note">Vmp×Imp = {(m.vmp * m.imp).toFixed(0)} W{Math.abs(m.vmp * m.imp - m.pmax) > m.pmax * 0.03 ? ' ⚠ no coincide con Pmax' : ''}. Half-cut se modela como celdas completas equivalentes (resultado conservador).</p>
+      </More>
+      <p className="note tip">💡 Después de cambiar strings u optimizadores, vuelve a simular (botón abajo) para comparar la energía recuperada.</p>
     </>
   );
 }
 
-function Casa() {
-  const h = useStore(s => s.project.house), { setHouse } = useStore.getState();
-  return (
-    <>
-      <H3>Casa / edificio</H3>
-      <label className="check"><input type="checkbox" checked={h.enabled} onChange={e => setHouse({ enabled: e.target.checked })} /> Incluir casa en el proyecto</label>
-      {h.enabled && <>
-        <Row cols={3}>
-          <Num label="Centro X" unit="m" value={h.x} onChange={x => setHouse({ x })} />
-          <Num label="Centro Y" unit="m" value={h.y} onChange={y => setHouse({ y })} />
-          <Num label="Azimut frente" unit="°" value={h.rot} step={1} onChange={rot => setHouse({ rot })} />
-        </Row>
-        <Row cols={3}>
-          <Num label="Ancho" unit="m" value={h.ancho} min={2} onChange={ancho => setHouse({ ancho })} />
-          <Num label="Fondo" unit="m" value={h.fondo} min={2} onChange={fondo => setHouse({ fondo })} />
-          <Num label="Pisos" value={h.pisos} step={1} min={1} max={30} onChange={pisos => setHouse({ pisos: Math.round(pisos) })} />
-        </Row>
-        <Row cols={3}>
-          <Num label="Alto por piso" unit="m" value={h.altoPiso} min={2} onChange={altoPiso => setHouse({ altoPiso })} />
-        </Row>
-        <H3>Techo</H3>
-        <Seg value={h.techo} options={ROOF} onChange={techo => setHouse({ techo })} />
-        <Row cols={3}>
-          {h.techo !== 'plano' && <Num label="Pendiente" unit="°" value={h.pendiente} step={1} min={1} max={60} onChange={pendiente => setHouse({ pendiente })} />}
-          {h.techo !== 'plano' && <Num label="Alero" unit="m" value={h.alero} min={0} max={2} onChange={alero => setHouse({ alero })} />}
-          {h.techo === 'plano' && <Num label="Parapeto" unit="m" value={h.parapeto} min={0} onChange={parapeto => setHouse({ parapeto })} />}
-        </Row>
-        <p className="note">Altura de aleros {eaveHeight(h).toFixed(1)} m. El azimut del frente define hacia dónde cae el faldón frontal (0° = Norte). Para moverla o girarla, cambia X, Y y el azimut en estos campos.</p>
-      </>}
-    </>
-  );
-}
-
-function Paneles() {
-  const p = useStore(s => s.project), sel = useStore(s => s.sel), { setField, addField, removeField, set } = useStore.getState();
-  const { fieldInfo, lay } = useSim();
-  const f = sel?.kind === 'field' ? p.fields.find(x => x.id === sel.id) : undefined;
-  const info = f ? fieldInfo.find(i => i.id === f.id) : undefined;
-  return (
-    <>
-      <H3>Campos de paneles</H3>
-      <div className="list">
-        {p.fields.map((x, i) => {
-          const fi = fieldInfo[i], n = lay.modules.filter(m => m.field === i).length;
-          return <button key={x.id} className={'item' + (f?.id === x.id ? ' on' : '')} onClick={() => set({ sel: { kind: 'field', id: x.id } })}>
-            <b>{i + 1}. {x.nombre}</b><span>{n} mód. · {fi?.superficie} · {fi?.tilt.toFixed(0)}°{fi?.avisos.length ? ' · ⚠' : ''}</span></button>;
-        })}
-      </div>
-      <div className="addrow">
-        <button className="btn ter" onClick={() => addField('techo')} disabled={!p.house.enabled}>+ Campo en techo</button>
-        <button className="btn ter" onClick={() => addField('suelo')}>+ Campo en suelo / carport</button>
-      </div>
-      {f && info && <div className="card">
-        <Row><label>Nombre<input value={f.nombre} onChange={e => setField(f.id, { nombre: e.target.value })} /></label>
-          <div className="eff"><span>Superficie</span><b>{info.superficie}</b></div></Row>
-        <Row cols={3}>
-          <Num label="Centro X" unit="m" value={f.x} onChange={x => setField(f.id, { x })} />
-          <Num label="Centro Y" unit="m" value={f.y} onChange={y => setField(f.id, { y })} />
-          <Num label="Altura" unit="m" value={f.altura} min={0} onChange={altura => setField(f.id, { altura })} />
-        </Row>
-        <label className="lblsm">Montaje</label>
-        <Seg value={f.montaje} options={[['coplanar', 'Coplanar al techo'], ['inclinada', 'Base inclinable']]} onChange={montaje => setField(f.id, { montaje })} />
-        {f.montaje === 'inclinada' && <>
-          <label className="lblsm">Rango de la base</label>
-          <Seg value={f.rango} options={(Object.keys(TILT_RANGES) as TiltRange[]).map(r => [r, `${r}°`])}
-            onChange={rango => { const [a, b] = TILT_RANGES[rango]; setField(f.id, { rango, tilt: Math.min(b, Math.max(a, f.tilt)) }); }} />
-          <label>Inclinación: <b className="am">{f.tilt}°</b>
-            <input type="range" min={TILT_RANGES[f.rango][0]} max={TILT_RANGES[f.rango][1]} step={1} value={f.tilt} onChange={e => setField(f.id, { tilt: +e.target.value })} />
-          </label>
-        </>}
-        <Row cols={3}>
-          {(f.montaje === 'inclinada' || info.tilt === 0) && <Num label="Azimut" unit="°" value={f.azim} step={1} onChange={azim => setField(f.id, { azim })} />}
-          {f.montaje === 'inclinada' && <Num label="Pitch filas" unit="m" value={f.pitch} min={0.5} onChange={pitch => setField(f.id, { pitch })} />}
-        </Row>
-        <Row cols={3}>
-          <Num label="Filas" value={f.filas} step={1} min={1} max={50} onChange={v => setField(f.id, { filas: Math.round(v) })} />
-          <Num label="Mód. por fila" value={f.mods} step={1} min={1} max={100} onChange={v => setField(f.id, { mods: Math.round(v) })} />
-          <Num label="En alto" value={f.enAlto} step={1} min={1} max={4} onChange={v => setField(f.id, { enAlto: Math.round(v) })} />
-        </Row>
-        <label className="lblsm">Orientación del módulo</label>
-        <Seg value={f.orient} options={[['V', 'Vertical'], ['H', 'Horizontal']]} onChange={orient => setField(f.id, { orient })} />
-        <p className="note">Efectivo: inclinación {info.tilt.toFixed(1)}° · azimut {info.azim.toFixed(0)}°{f.montaje === 'coplanar' && info.tilt > 0 ? ' (del faldón)' : ''}</p>
-        {info.avisos.map(a => <div key={a} className="warn">⚠ {a}</div>)}
-        <button className="btn sec sm" onClick={() => removeField(f.id)}>Eliminar campo</button>
-      </div>}
-      {!f && <p className="note">Selecciona un campo en la lista o haz clic en él en 3D para editarlo. Su posición y orientación se cambian en estos campos.</p>}
-    </>
-  );
-}
-
-function Objetos() {
-  const p = useStore(s => s.project), sel = useStore(s => s.sel), { setObs, addObs, removeObs, set } = useStore.getState();
-  const o = sel?.kind === 'obs' ? p.obstacles.find(x => x.id === sel.id) : undefined;
-  const dist = o ? distanceToHouse(p, o) : null;
-  return (
-    <>
-      <H3>Objetos que dan sombra</H3>
-      <div className="addrow">
-        {(Object.keys(OBS_LBL) as ObsType[]).map(t => <button key={t} className="btn ter" onClick={() => addObs(t)}>+ {OBS_LBL[t]}</button>)}
-      </div>
-      <div className="list">
-        {p.obstacles.map((x, i) => {
-          const d = distanceToHouse(p, x);
-          return <button key={x.id} className={'item' + (o?.id === x.id ? ' on' : '')} onClick={() => set({ sel: { kind: 'obs', id: x.id } })}>
-            <b>{i + 1}. {OBS_LBL[x.tipo]}</b><span>{x.alto} m alto{d ? (d.inside ? ' · sobre la casa' : ` · ${d.d.toFixed(2)} m de la casa`) : ''}</span></button>;
-        })}
-      </div>
-      {o && <div className="card">
-        <div className="eff"><span>Distancia a la casa</span><b>{dist ? (dist.inside ? 'sobre la casa' : `${dist.d.toFixed(2)} m`) : '—'}</b></div>
-        <Row cols={3}>
-          <Num label="X (Este)" unit="m" value={o.x} onChange={x => setObs(o.id, { x })} />
-          <Num label="Y (Norte)" unit="m" value={o.y} onChange={y => setObs(o.id, { y })} />
-          <Num label={o.tipo === 'chimenea' ? 'Alto sobre techo' : 'Alto'} unit="m" value={o.alto} min={0.1} onChange={alto => setObs(o.id, { alto })} />
-        </Row>
-        <Row cols={3}>
-          {o.tipo === 'arbol' && <Num label="Diámetro copa" unit="m" value={o.copa} min={0.5} onChange={copa => setObs(o.id, { copa })} />}
-          {o.tipo === 'poste' && <Num label="Diámetro" unit="m" value={o.ancho} min={0.05} onChange={ancho => setObs(o.id, { ancho })} />}
-          {['edificio', 'muro', 'chimenea'].includes(o.tipo) && <>
-            <Num label={o.tipo === 'muro' ? 'Largo' : 'Ancho'} unit="m" value={o.ancho} min={0.1} onChange={ancho => setObs(o.id, { ancho })} />
-            <Num label={o.tipo === 'muro' ? 'Espesor' : 'Fondo'} unit="m" value={o.largo} min={0.05} onChange={largo => setObs(o.id, { largo })} />
-            <Num label="Rotación" unit="°" value={o.rot} step={1} onChange={rot => setObs(o.id, { rot })} />
-          </>}
-        </Row>
-        <p className="note">Haz clic en un objeto en 3D para seleccionarlo; muévelo cambiando X e Y en estos campos. La cota punteada muestra la distancia libre hasta el muro de la casa más cercano.</p>
-        <button className="btn sec sm" onClick={() => removeObs(o.id)}>Eliminar objeto</button>
-      </div>}
-    </>
-  );
+// ---------- asistente ----------
+function useStepDone(): Record<Tab, boolean> {
+  const p = useStore(s => s.project), day = useStore(s => s.day), yearRes = useStore(s => s.yearRes), stale = useStore(s => s.stale);
+  const { lay, rs } = useSim();
+  return {
+    sitio: true,
+    casa: p.house.enabled || p.fields.length > 0,
+    paneles: lay.modules.length > 0,
+    objetos: p.obstacles.length > 0,
+    simular: !!(day || yearRes) && !stale,
+    electrico: rs.strings.length > 0 && rs.avisos.length === 0,
+  };
 }
 
 export default function Sidebar() {
-  const tab = useStore(s => s.tab), set = useStore(s => s.set);
-  const TABS: [Tab, string][] = [['sitio', 'Sitio'], ['casa', 'Casa'], ['paneles', 'Paneles'], ['objetos', 'Objetos'], ['electrico', 'Eléctrico']];
+  const tab = useStore(s => s.tab), done = useStepDone();
+  const i = STEPS.indexOf(tab), info = STEP_INFO[tab], prev = STEPS[i - 1], next = STEPS[i + 1];
   return (
     <aside>
-      <div className="tabsbar">{TABS.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => set({ tab: k })}>{l}</button>)}</div>
+      <nav className="stepper">
+        {STEPS.map((k, j) => (
+          <button key={k} className={(k === tab ? 'on' : '') + (done[k] && k !== tab ? ' done' : '')} onClick={() => goStep(k)} title={STEP_INFO[k].t}>
+            <span className="dot">{done[k] && k !== tab ? '✓' : j + 1}</span><span className="nm">{STEP_INFO[k].short}</span>
+          </button>
+        ))}
+      </nav>
+      <div className="stephead">
+        <div className="lbl">Paso {i + 1} de {STEPS.length}</div>
+        <h2>{info.t}</h2>
+        <p>{info.d}</p>
+      </div>
       <div className="pane">
-        {tab === 'sitio' && <Sitio />}{tab === 'casa' && <Casa />}{tab === 'paneles' && <Paneles />}{tab === 'objetos' && <Objetos />}{tab === 'electrico' && <Electrico />}
+        {tab === 'sitio' && <Sitio />}{tab === 'casa' && <Casa />}{tab === 'paneles' && <Paneles />}
+        {tab === 'objetos' && <Objetos />}{tab === 'simular' && <Simular />}{tab === 'electrico' && <Electrico />}
+      </div>
+      <div className="stepnav">
+        {prev ? <button className="btn sec sm" onClick={() => goStep(prev)}>← Atrás</button> : <span />}
+        {next && <button className="btn pri sm" onClick={() => goStep(next)}>Siguiente: {STEP_INFO[next].short} →</button>}
       </div>
     </aside>
   );

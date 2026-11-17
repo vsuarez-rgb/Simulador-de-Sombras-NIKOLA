@@ -4,7 +4,10 @@ import type { DayResult, YearResult } from './engine/sim';
 
 export type Sel = { kind: 'house' } | { kind: 'field'; id: string } | { kind: 'obs'; id: string } | null;
 export type Mode = 'instante' | 'dia' | 'anio';
-export type Tab = 'sitio' | 'casa' | 'paneles' | 'objetos' | 'electrico';
+export type Tab = 'sitio' | 'casa' | 'paneles' | 'objetos' | 'simular' | 'electrico';
+/** Pasos del asistente, en orden. Los cuatro primeros son de diseño (sin resultados en pantalla). */
+export const STEPS: Tab[] = ['sitio', 'casa', 'paneles', 'objetos', 'simular', 'electrico'];
+export const DESIGN_STEPS: Tab[] = STEPS.slice(0, 4);
 export type Clima = 'despejado' | 'archivo' | 'pvgis';
 export type ColorBy = 'celda' | 'panel';
 
@@ -69,7 +72,7 @@ export const useStore = create<State>((set, get) => {
   };
   return {
     project: load(),
-    sel: null, tab: 'casa', mode: 'instante',
+    sel: null, tab: 'sitio', mode: 'instante',
     fecha: `${year}-06-21`, hora: 15, sub: 2, clima: 'despejado', tool: 'string', activeString: null,
     showLabels: true, showDims: true, showSunPath: true, selModule: -1,
     hideSide: false, hideRes: false, colorBy: 'celda', stale: false,
@@ -117,3 +120,15 @@ export const useStore = create<State>((set, get) => {
     set: s => set(s as Partial<State>),
   };
 });
+
+/** Navegar a un paso: al entrar a Paneles se selecciona el primer campo si no hay uno elegido. */
+export function goStep(t: Tab) {
+  const st = useStore.getState(), p = st.project;
+  const patch: Partial<State> = { tab: t };
+  if (t === 'paneles' && st.sel?.kind !== 'field' && p.fields[0]) patch.sel = { kind: 'field', id: p.fields[0].id };
+  if (t === 'objetos' && st.sel?.kind !== 'obs') patch.sel = p.obstacles[0] ? { kind: 'obs', id: p.obstacles[0].id } : null;
+  if (t === 'casa') patch.sel = p.house.enabled ? { kind: 'house' } : null;
+  if (t === 'sitio' || t === 'simular' || t === 'electrico') patch.sel = null;
+  st.set(patch);
+}
+
